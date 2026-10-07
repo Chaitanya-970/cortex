@@ -32,6 +32,9 @@ pub enum ExecutionEvent {
         run_id: RunId,
         /// Summary of the model response or proposed actions.
         output_summary: String,
+        /// Optional structured representation of the response for deterministic replay.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        structured_output: Option<serde_json::Value>,
     },
 
     /// A tool execution has begun.

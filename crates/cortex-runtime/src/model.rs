@@ -121,6 +121,72 @@ impl ModelProvider for MockModelProvider {
     }
 }
 
+/// Deterministic replay model provider that re-executes runs from recorded event logs.
+pub struct ReplayModelProvider {
+    descriptor: ModelDescriptor,
+    recorded_responses: Mutex<VecDeque<ModelOutput>>,
+}
+
+impl ReplayModelProvider {
+    /// Create a [`ReplayModelProvider`] from a list of recorded [`ModelOutput`]s.
+    pub fn new(responses: Vec<ModelOutput>) -> Self {
+        Self {
+            descriptor: ModelDescriptor::new("replay", "deterministic-replay-v1"),
+            recorded_responses: Mutex::new(VecDeque::from(responses)),
+        }
+    }
+
+    /// Construct a [`ReplayModelProvider`] by extracting recorded model responses from a [`RunStore`].
+    pub fn from_store(
+        store: &crate::storage::RunStore,
+        run_id: &cortex_core::RunId,
+    ) -> Result<Self> {
+        let events = store.get_events(run_id)?;
+        let mut outputs = Vec::new();
+        for record in events {
+            if let cortex_core::ExecutionEvent::ModelResponse {
+                structured_output: Some(val),
+                ..
+            } = record.event
+            {
+                let model_out: ModelOutput = serde_json::from_value(val).map_err(|e| {
+                    CortexError::Internal(format!(
+                        "failed to deserialize recorded model output: {}",
+                        e
+                    ))
+                })?;
+                outputs.push(model_out);
+            }
+        }
+        if outputs.is_empty() {
+            return Err(CortexError::NotFound(format!(
+                "no replayable model responses found for run '{}'",
+                run_id
+            )));
+        }
+        Ok(Self::new(outputs))
+    }
+}
+
+impl ModelProvider for ReplayModelProvider {
+    fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
+    }
+
+    fn is_configured(&self) -> Result<bool> {
+        Ok(true)
+    }
+
+    fn generate(&self, _context: &AgentContext) -> Result<ModelOutput> {
+        let mut queue = self.recorded_responses.lock().map_err(|_| {
+            CortexError::Internal("failed to acquire replay provider lock".to_string())
+        })?;
+        queue.pop_front().ok_or_else(|| {
+            CortexError::Internal("ReplayModelProvider ran out of recorded responses".to_string())
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +203,28 @@ mod tests {
         match res {
             ModelOutput::FinalAnswer(ans) => assert_eq!(ans, "all done"),
             _ => panic!("unexpected response"),
+        }
+    }
+
+    #[test]
+    fn test_replay_model_provider() {
+        let responses = vec![
+            ModelOutput::ToolCalls(vec![ToolCall::new("c1", "dummy", serde_json::json!({}))]),
+            ModelOutput::FinalAnswer("replayed finish".to_string()),
+        ];
+        let replay = ReplayModelProvider::new(responses);
+        let ctx = AgentContext::new("replay test");
+
+        let r1 = replay.generate(&ctx).unwrap();
+        match r1 {
+            ModelOutput::ToolCalls(calls) => assert_eq!(calls[0].id, "c1"),
+            _ => panic!("expected ToolCalls"),
+        }
+
+        let r2 = replay.generate(&ctx).unwrap();
+        match r2 {
+            ModelOutput::FinalAnswer(ans) => assert_eq!(ans, "replayed finish"),
+            _ => panic!("expected FinalAnswer"),
         }
     }
 }

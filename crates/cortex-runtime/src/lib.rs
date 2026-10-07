@@ -20,7 +20,9 @@ pub mod workspace;
 pub use agent::{
     AgentContext, AgentLoop, AgentRunResult, CancellationToken, ChatMessage, CODING_AGENT_POLICY,
 };
-pub use model::{MockModelProvider, ModelDescriptor, ModelOutput, ModelProvider, ToolCall};
+pub use model::{
+    MockModelProvider, ModelDescriptor, ModelOutput, ModelProvider, ReplayModelProvider, ToolCall,
+};
 pub use sandbox::{Sandbox, SandboxMode};
 pub use storage::{RunStore, RunSummary};
 pub use tool::{validate_schema, Tool, ToolDefinition, ToolRegistry, ToolResult};

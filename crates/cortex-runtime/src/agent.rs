@@ -260,9 +260,11 @@ impl AgentLoop {
                         format!("ToolCalls: {}", names.join(", "))
                     }
                 };
+                let structured_output = serde_json::to_value(&output).ok();
                 let event = ExecutionEvent::ModelResponse {
                     run_id: context.run_id.clone(),
                     output_summary: self.redactor.redact_text(&summary),
+                    structured_output,
                 };
                 store.record_event(&EventRecord::new(sequence, event))?;
                 sequence += 1;

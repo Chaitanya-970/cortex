@@ -62,6 +62,12 @@ enum RunsCommands {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Replay a recorded execution run deterministically.
+    Replay {
+        /// Run identifier to replay.
+        run_id: String,
+    },
 }
 
 fn default_db_path() -> PathBuf {
@@ -169,6 +175,34 @@ fn show_run(
     Ok(())
 }
 
+fn replay_run(store: &RunStore, run_id_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let run_id = RunId::from(run_id_str);
+    let run = match store.get_run(&run_id)? {
+        Some(r) => r,
+        None => {
+            eprintln!("Error: Run '{}' not found.", run_id_str);
+            std::process::exit(1);
+        }
+    };
+
+    println!("Replaying run:   {}", run.id);
+    println!("Original Task:   {}", run.task);
+    println!("Original Status: {}", run.status);
+
+    let replay_provider = cortex_runtime::ReplayModelProvider::from_store(store, &run_id)?;
+    let mut replay_context = cortex_runtime::AgentContext::new(&run.task);
+    let registry = cortex_runtime::ToolRegistry::new();
+    let agent = cortex_runtime::AgentLoop::new(10);
+
+    let res = agent.run(&mut replay_context, &replay_provider, &registry)?;
+    println!("\nReplay Result:");
+    println!("Status:       completed");
+    println!("Iterations:   {}", res.iterations);
+    println!("Final Answer: {}", res.final_answer);
+
+    Ok(())
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -217,6 +251,12 @@ fn main() {
                 RunsCommands::Show { run_id, verbose } => {
                     if let Err(e) = show_run(&store, &run_id, verbose) {
                         eprintln!("Error displaying run: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+                RunsCommands::Replay { run_id } => {
+                    if let Err(e) = replay_run(&store, &run_id) {
+                        eprintln!("Error replaying run: {}", e);
                         std::process::exit(1);
                     }
                 }

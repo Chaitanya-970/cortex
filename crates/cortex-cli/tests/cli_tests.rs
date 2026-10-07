@@ -95,5 +95,32 @@ fn test_cli_runs_list_and_show() {
     assert!(stdout.contains("run_cli_test_01"));
     assert!(stdout.contains("RunStarted"));
 
+    // Record a model response for replay
+    let replay_event = cortex_core::ExecutionEvent::ModelResponse {
+        run_id: run_id.clone(),
+        output_summary: "Final answer".to_string(),
+        structured_output: Some(
+            serde_json::to_value(cortex_runtime::ModelOutput::FinalAnswer(
+                "replayed answer verify".to_string(),
+            ))
+            .unwrap(),
+        ),
+    };
+    store
+        .record_event(&cortex_core::EventRecord::new(2, replay_event))
+        .unwrap();
+
+    // Test cortex runs replay
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_DB_PATH", &db_path)
+        .args(["runs", "replay", "run_cli_test_01"])
+        .output()
+        .expect("Failed to execute cortex runs replay");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Replaying run:   run_cli_test_01"));
+    assert!(stdout.contains("replayed answer verify"));
+
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
