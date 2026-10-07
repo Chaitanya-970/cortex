@@ -1,0 +1,21 @@
+[
+  {
+    "id": "refactor-01-extract-helper",
+    "name": "Extract Helper Function",
+    "suite": "refactor",
+    "description": "Extract duplicated email validation regex into dedicated helper module",
+    "prompt": "Refactor auth.py to use validate_email from validator.py.",
+    "initial_files": [
+      {
+        "path": "auth.py",
+        "content": "def register_user(email, password):\n    if '@' not in email or '.' not in email:\n        return False\n    return len(password) >= 8\n"
+      },
+      {
+        "path": "test_auth.py",
+        "content": "from auth import register_user\nassert register_user('test@example.com', 'secret123') is True\nassert register_user('invalid', 'secret123') is False\nprint('Auth tests passed.')\n"
+      }
+    ],
+    "verification_command": "python3 test_auth.py",
+    "expected_exit_code": 0
+  }
+]

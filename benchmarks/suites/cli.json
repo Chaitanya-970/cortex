@@ -1,0 +1,21 @@
+[
+  {
+    "id": "cli-01-flag-handling",
+    "name": "CLI Verbose Flag Handling",
+    "suite": "cli",
+    "description": "Support --verbose flag in argument processor",
+    "prompt": "Update cli.py to parse --verbose flag correctly.",
+    "initial_files": [
+      {
+        "path": "cli.py",
+        "content": "import sys\ndef parse_args(args):\n    verbose = '--verbose' in args\n    return {'verbose': verbose}\n"
+      },
+      {
+        "path": "test_cli.py",
+        "content": "from cli import parse_args\nassert parse_args(['--verbose'])['verbose'] is True\nassert parse_args([])['verbose'] is False\nprint('CLI tests passed.')\n"
+      }
+    ],
+    "verification_command": "python3 test_cli.py",
+    "expected_exit_code": 0
+  }
+]

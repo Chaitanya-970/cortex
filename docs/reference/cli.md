@@ -12,16 +12,11 @@ cortex agent stop
 cortex agent inspect
 
 cortex runs
-cortex runs list
-cortex runs show <id>
+cortex runs list [--limit <N>]
+cortex runs show <id> [--verbose]
+cortex runs replay <id>
 
-cortex cron list
-cortex cron create
-cortex cron delete
-cortex cron inspect
-cortex cron history
-
-cortex eval ./evals
+cortex bench run [--suite <suite>] [--json] [--report <path>]
 ```
 
 Commands should expose runtime state rather than duplicating business logic.

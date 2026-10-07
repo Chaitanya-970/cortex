@@ -1,10 +1,15 @@
 //! Strongly typed identifiers for agents, runs, and sessions.
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Strongly typed identifier for an agent.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AgentId(String);
+
+static AGENT_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static RUN_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static SESSION_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl AgentId {
     /// Create a new [`AgentId`] from a string.
@@ -12,9 +17,22 @@ impl AgentId {
         Self(id.into())
     }
 
+    /// Generate a unique [`AgentId`] based on current timestamp and atomic counter.
+    pub fn generate() -> Self {
+        let ts = chrono::Utc::now().timestamp_micros();
+        let cnt = AGENT_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(format!("agent_{}_{:04x}", ts, cnt & 0xffff))
+    }
+
     /// Access the underlying string representation.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl Default for AgentId {
+    fn default() -> Self {
+        Self::generate()
     }
 }
 
@@ -37,7 +55,7 @@ impl From<String> for AgentId {
 }
 
 /// Strongly typed identifier for an individual execution run.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RunId(String);
 
 impl RunId {
@@ -46,9 +64,22 @@ impl RunId {
         Self(id.into())
     }
 
+    /// Generate a unique [`RunId`] based on current timestamp and atomic counter.
+    pub fn generate() -> Self {
+        let ts = chrono::Utc::now().timestamp_micros();
+        let cnt = RUN_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(format!("run_{}_{:04x}", ts, cnt & 0xffff))
+    }
+
     /// Access the underlying string representation.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl Default for RunId {
+    fn default() -> Self {
+        Self::generate()
     }
 }
 
@@ -71,7 +102,7 @@ impl From<String> for RunId {
 }
 
 /// Strongly typed identifier for an interactive session.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SessionId(String);
 
 impl SessionId {
@@ -80,9 +111,22 @@ impl SessionId {
         Self(id.into())
     }
 
+    /// Generate a unique [`SessionId`] based on current timestamp and atomic counter.
+    pub fn generate() -> Self {
+        let ts = chrono::Utc::now().timestamp_micros();
+        let cnt = SESSION_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(format!("session_{}_{:04x}", ts, cnt & 0xffff))
+    }
+
     /// Access the underlying string representation.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl Default for SessionId {
+    fn default() -> Self {
+        Self::generate()
     }
 }
 
