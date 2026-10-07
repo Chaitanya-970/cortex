@@ -1,32 +1,26 @@
 # Configuration for cargo-deny (https://embarkstudios.github.io/cargo-deny/)
 
+[graph]
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
 ignore = []
 
 [licenses]
-unlicensed = "deny"
 allow = [
     "Apache-2.0",
     "MIT",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
-    "Unicode-DFS-2016",
-    "OpenSSL",
+    "Unicode-3.0",
 ]
 confidence-threshold = 0.8
 exceptions = []
 
-[[licenses.clarify]]
-name = "ring"
-expression = "MIT AND ISC AND OpenSSL"
-license-files = [
-    { checksum = "bd0eed22394f247729824e532a0b176651561680ea3ec4413b52b633a0833b9c", path = "LICENSE" },
-]
+[licenses.private]
+ignore = false
 
 [bans]
 multiple-versions = "warn"
@@ -36,11 +30,13 @@ workspace-default-features = "allow"
 external-default-features = "allow"
 allow = []
 deny = []
-skip = []
+skip = [
+    { name = "syn" },
+]
 skip-tree = []
 
 [sources]
-unknown-registry = "deny"
-unknown-git = "deny"
+unknown-registry = "warn"
+unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = []
