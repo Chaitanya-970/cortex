@@ -38,7 +38,9 @@ pub fn create_model_provider(
     let lower = model.to_lowercase();
 
     if lower.starts_with("claude") {
-        let key = api_key.or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+        let key = api_key
+            .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+            .or_else(|| std::env::var("anthropic_api_key").ok());
         let url = base_url.unwrap_or_else(|| "https://api.anthropic.com/v1".to_string());
         Ok(Arc::new(AnthropicProvider::new(model, key, Some(url))))
     } else if lower.starts_with("ollama/") {
@@ -50,10 +52,14 @@ pub fn create_model_provider(
             Some(url),
         )))
     } else {
-        let key = api_key.or_else(|| std::env::var("OPENAI_API_KEY").ok());
+        let key = api_key
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .or_else(|| std::env::var("openai_api_key").ok());
         let url = base_url
             .or_else(|| std::env::var("OPENAI_API_BASE").ok())
-            .or_else(|| std::env::var("CORTEX_API_BASE").ok());
+            .or_else(|| std::env::var("openai_api_base").ok())
+            .or_else(|| std::env::var("CORTEX_API_BASE").ok())
+            .or_else(|| std::env::var("cortex_api_base").ok());
         Ok(Arc::new(OpenAiCompatibleProvider::new(model, key, url)))
     }
 }
