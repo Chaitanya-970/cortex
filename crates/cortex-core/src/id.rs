@@ -1,9 +1,10 @@
 //! Strongly typed identifiers for agents, runs, and sessions.
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Strongly typed identifier for an agent.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct AgentId(String);
 
 impl AgentId {
@@ -37,7 +38,7 @@ impl From<String> for AgentId {
 }
 
 /// Strongly typed identifier for an individual execution run.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RunId(String);
 
 impl RunId {
@@ -71,7 +72,7 @@ impl From<String> for RunId {
 }
 
 /// Strongly typed identifier for an interactive session.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SessionId(String);
 
 impl SessionId {

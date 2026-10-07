@@ -1,7 +1,7 @@
 //! # cortex-core
 //!
-//! Foundational domain types, identifiers, and error abstractions for the Cortex
-//! agent runtime and harness.
+//! Foundational domain types, identifiers, error abstractions, event models,
+//! and secret redaction for the Cortex agent runtime and harness.
 //!
 //! Cortex is an open-source runtime for autonomous AI workers.
 //! This crate provides shared kernel primitives that higher-level crates
@@ -10,10 +10,14 @@
 #![deny(missing_docs)]
 
 pub mod error;
+pub mod event;
 pub mod id;
+pub mod redact;
 
 pub use error::{CortexError, Result};
+pub use event::{EventRecord, ExecutionEvent};
 pub use id::{AgentId, RunId, SessionId};
+pub use redact::Redactor;
 
 /// Current semantic version of the Cortex core library.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
