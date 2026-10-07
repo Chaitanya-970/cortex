@@ -3,7 +3,7 @@
 //! Foundational domain types, identifiers, and error abstractions for the Cortex
 //! agent runtime and harness.
 //!
-//! Cortex is a long-lived open-source runtime for autonomous AI workers.
+//! Cortex is an open-source runtime for autonomous AI workers.
 //! This crate provides shared kernel primitives that higher-level crates
 //! (`cortex-runtime`, `cortex-cli`) depend upon.
 

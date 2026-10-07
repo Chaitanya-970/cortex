@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to Cortex!
 
-Cortex is an open-source runtime and harness for autonomous AI workers. It is built as a long-lived, serious Rust project. All contributions should optimize for maintainability, security, correctness, testability, and contributor experience.
+Cortex is an open-source runtime and harness for autonomous AI workers. All contributions should optimize for maintainability, security, correctness, testability, and contributor experience.
 
 ---
 

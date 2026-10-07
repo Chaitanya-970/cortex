@@ -2,7 +2,7 @@
 
 Cortex is an open-source agent runtime and harness for autonomous AI workers, rather than a single hardcoded agent prompt or prototype script.
 
-It is designed to provide long-lived, observable, sandboxed execution environments for coding agents and multi-agent teams.
+It is designed to provide observable, sandboxed execution environments for coding agents and multi-agent teams.
 
 ---
 
@@ -89,7 +89,7 @@ These events flow into SQLite storage and are streamed to observability consumer
 
 ---
 
-## Long-Lived OSS Design Principles
+## Core Design Principles
 
 1. **Small, Composable Modules**: Avoid monoliths. Each crate has a distinct responsibility.
 2. **Minimal Dependencies**: Every external dependency is evaluated for maintenance, security, and build impact.

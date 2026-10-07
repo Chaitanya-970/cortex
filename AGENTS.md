@@ -1,8 +1,6 @@
 # Cortex Engineering Contract
 
-Cortex is a long-lived open-source Rust project.
-
-It is NOT a throwaway hackathon project.
+Cortex is an open-source Rust runtime for autonomous AI workers.
 
 ## Priorities
 
