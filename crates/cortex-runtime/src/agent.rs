@@ -1,12 +1,15 @@
 //! Agent execution context, iteration coordinator, cancellation, and system policies.
 
 use crate::model::{ModelOutput, ModelProvider, ToolCall};
+use crate::storage::RunStore;
 use crate::tool::ToolRegistry;
 use crate::workspace::Workspace;
-use cortex_core::{CortexError, Result};
+use chrono::Utc;
+use cortex_core::{CortexError, EventRecord, ExecutionEvent, Redactor, Result, RunId};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 /// Standard coding-agent policy guidelines from the architecture specification.
 pub const CODING_AGENT_POLICY: &str = "\
@@ -50,6 +53,8 @@ pub enum ChatMessage {
 /// Execution context maintaining conversation history and workspace state.
 #[derive(Debug, Clone)]
 pub struct AgentContext {
+    /// Unique identifier for this execution run.
+    pub run_id: RunId,
     /// Initial task assigned to the agent.
     pub task: String,
     /// History of messages exchanged during this run.
@@ -61,10 +66,11 @@ pub struct AgentContext {
 }
 
 impl AgentContext {
-    /// Create a new [`AgentContext`] with an initial user task.
+    /// Create a new [`AgentContext`] with an initial user task and generated [`RunId`].
     pub fn new(task: impl Into<String>) -> Self {
         let task_str = task.into();
         Self {
+            run_id: RunId::generate(),
             messages: vec![
                 ChatMessage::System(CODING_AGENT_POLICY.to_string()),
                 ChatMessage::User(task_str.clone()),
@@ -73,6 +79,12 @@ impl AgentContext {
             workspace: None,
             iterations: 0,
         }
+    }
+
+    /// Set an explicit [`RunId`] for this execution context.
+    pub fn with_run_id(mut self, run_id: RunId) -> Self {
+        self.run_id = run_id;
+        self
     }
 
     /// Attach a [`Workspace`] boundary to this context.
@@ -115,18 +127,24 @@ impl CancellationToken {
 /// Final summary outcome produced by an agent execution run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentRunResult {
+    /// Associated execution run identifier.
+    pub run_id: RunId,
     /// Final text message or report from the agent.
     pub final_answer: String,
     /// Number of iterations executed during the run.
     pub iterations: usize,
     /// Whether the agent reached normal completion.
     pub completed: bool,
+    /// Elapsed execution time in milliseconds.
+    pub duration_ms: u64,
 }
 
 /// Coordinates the iterative model $\to$ tool $\to$ result $\to$ model execution loop.
 pub struct AgentLoop {
     max_iterations: usize,
     cancellation_token: CancellationToken,
+    store: Option<Arc<RunStore>>,
+    redactor: Arc<Redactor>,
 }
 
 impl AgentLoop {
@@ -135,12 +153,26 @@ impl AgentLoop {
         Self {
             max_iterations,
             cancellation_token: CancellationToken::new(),
+            store: None,
+            redactor: Arc::new(Redactor::default()),
         }
     }
 
     /// Attach a custom [`CancellationToken`].
     pub fn with_cancellation_token(mut self, token: CancellationToken) -> Self {
         self.cancellation_token = token;
+        self
+    }
+
+    /// Attach a persistent [`RunStore`] for recording structured events and execution runs.
+    pub fn with_store(mut self, store: Arc<RunStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    /// Attach a custom [`Redactor`] for scrubbing sensitive secrets from traces.
+    pub fn with_redactor(mut self, redactor: Arc<Redactor>) -> Self {
+        self.redactor = redactor;
         self
     }
 
@@ -151,8 +183,49 @@ impl AgentLoop {
         model: &dyn ModelProvider,
         registry: &ToolRegistry,
     ) -> Result<AgentRunResult> {
+        let start_time = Instant::now();
+        let started_at = Utc::now().to_rfc3339();
+        let mut sequence: u64 = 1;
+
+        // Record run start in store
+        if let Some(store) = &self.store {
+            store.record_run_start(&context.run_id, &context.task, &started_at)?;
+
+            let ws_root = context
+                .workspace
+                .as_ref()
+                .map(|w| w.root().to_string_lossy().to_string());
+
+            let run_started_event = ExecutionEvent::RunStarted {
+                run_id: context.run_id.clone(),
+                task: self.redactor.redact_text(&context.task),
+                workspace_root: ws_root,
+            };
+            store.record_event(&EventRecord::new(sequence, run_started_event))?;
+            sequence += 1;
+        }
+
         while context.iterations < self.max_iterations {
             if self.cancellation_token.is_cancelled() {
+                let duration_ms = start_time.elapsed().as_millis() as u64;
+                let finished_at = Utc::now().to_rfc3339();
+                if let Some(store) = &self.store {
+                    let cancel_event = ExecutionEvent::RunCancelled {
+                        run_id: context.run_id.clone(),
+                        reason: "agent execution cancelled by request".to_string(),
+                    };
+                    store.record_event(&EventRecord::new(sequence, cancel_event))?;
+                    store.record_run_completion(
+                        &context.run_id,
+                        "cancelled",
+                        &finished_at,
+                        duration_ms,
+                        0,
+                        0,
+                        0.0,
+                        Some("agent execution cancelled by request"),
+                    )?;
+                }
                 return Err(CortexError::Cancelled(
                     "agent execution cancelled by request".to_string(),
                 ));
@@ -160,24 +233,113 @@ impl AgentLoop {
 
             context.iterations += 1;
 
+            // Emit ModelRequest event
+            if let Some(store) = &self.store {
+                let preview = context
+                    .messages
+                    .last()
+                    .map(|m| format!("{:?}", m))
+                    .unwrap_or_default();
+                let event = ExecutionEvent::ModelRequest {
+                    run_id: context.run_id.clone(),
+                    prompt_preview: self.redactor.redact_text(&preview),
+                };
+                store.record_event(&EventRecord::new(sequence, event))?;
+                sequence += 1;
+            }
+
             // Generate next action from model
             let output = model.generate(context)?;
 
+            // Emit ModelResponse event
+            if let Some(store) = &self.store {
+                let summary = match &output {
+                    ModelOutput::FinalAnswer(ans) => format!("FinalAnswer: {}", ans),
+                    ModelOutput::ToolCalls(calls) => {
+                        let names: Vec<_> = calls.iter().map(|c| c.name.as_str()).collect();
+                        format!("ToolCalls: {}", names.join(", "))
+                    }
+                };
+                let event = ExecutionEvent::ModelResponse {
+                    run_id: context.run_id.clone(),
+                    output_summary: self.redactor.redact_text(&summary),
+                };
+                store.record_event(&EventRecord::new(sequence, event))?;
+                sequence += 1;
+            }
+
             match output {
                 ModelOutput::FinalAnswer(answer) => {
+                    let duration_ms = start_time.elapsed().as_millis() as u64;
+                    let finished_at = Utc::now().to_rfc3339();
+
                     context.push_message(ChatMessage::Assistant(answer.clone()));
+
+                    if let Some(store) = &self.store {
+                        let comp_event = ExecutionEvent::RunCompleted {
+                            run_id: context.run_id.clone(),
+                            final_answer: self.redactor.redact_text(&answer),
+                            iterations: context.iterations,
+                            duration_ms,
+                        };
+                        store.record_event(&EventRecord::new(sequence, comp_event))?;
+                        store.record_run_completion(
+                            &context.run_id,
+                            "completed",
+                            &finished_at,
+                            duration_ms,
+                            0,
+                            0,
+                            0.0,
+                            None,
+                        )?;
+                    }
+
                     return Ok(AgentRunResult {
+                        run_id: context.run_id.clone(),
                         final_answer: answer,
                         iterations: context.iterations,
                         completed: true,
+                        duration_ms,
                     });
                 }
                 ModelOutput::ToolCalls(calls) => {
                     for call in calls {
                         if self.cancellation_token.is_cancelled() {
+                            let duration_ms = start_time.elapsed().as_millis() as u64;
+                            let finished_at = Utc::now().to_rfc3339();
+                            if let Some(store) = &self.store {
+                                let cancel_event = ExecutionEvent::RunCancelled {
+                                    run_id: context.run_id.clone(),
+                                    reason: "agent execution cancelled during tool processing"
+                                        .to_string(),
+                                };
+                                store.record_event(&EventRecord::new(sequence, cancel_event))?;
+                                store.record_run_completion(
+                                    &context.run_id,
+                                    "cancelled",
+                                    &finished_at,
+                                    duration_ms,
+                                    0,
+                                    0,
+                                    0.0,
+                                    Some("agent execution cancelled during tool processing"),
+                                )?;
+                            }
                             return Err(CortexError::Cancelled(
                                 "agent execution cancelled during tool processing".to_string(),
                             ));
+                        }
+
+                        // Emit ToolStarted event
+                        if let Some(store) = &self.store {
+                            let start_event = ExecutionEvent::ToolStarted {
+                                run_id: context.run_id.clone(),
+                                tool_name: call.name.clone(),
+                                arguments: self.redactor.redact_json(&call.arguments),
+                            };
+                            store.record_event(&EventRecord::new(sequence, start_event))?;
+                            sequence += 1;
                         }
 
                         context.push_message(ChatMessage::ToolCall(call.clone()));
@@ -187,6 +349,25 @@ impl AgentLoop {
 
                         match tool_result {
                             Ok(res) => {
+                                let redacted_out = self.redactor.redact_text(&res.output);
+                                if let Some(store) = &self.store {
+                                    let ev = if res.is_error {
+                                        ExecutionEvent::ToolFailed {
+                                            run_id: context.run_id.clone(),
+                                            tool_name: call.name.clone(),
+                                            error: redacted_out.clone(),
+                                        }
+                                    } else {
+                                        ExecutionEvent::ToolCompleted {
+                                            run_id: context.run_id.clone(),
+                                            tool_name: call.name.clone(),
+                                            output: redacted_out.clone(),
+                                        }
+                                    };
+                                    store.record_event(&EventRecord::new(sequence, ev))?;
+                                    sequence += 1;
+                                }
+
                                 context.push_message(ChatMessage::ToolResult {
                                     call_id: call.id,
                                     tool_name: call.name,
@@ -195,10 +376,22 @@ impl AgentLoop {
                                 });
                             }
                             Err(e) => {
+                                let err_msg = format!("execution error: {}", e);
+                                let redacted_err = self.redactor.redact_text(&err_msg);
+                                if let Some(store) = &self.store {
+                                    let ev = ExecutionEvent::ToolFailed {
+                                        run_id: context.run_id.clone(),
+                                        tool_name: call.name.clone(),
+                                        error: redacted_err,
+                                    };
+                                    store.record_event(&EventRecord::new(sequence, ev))?;
+                                    sequence += 1;
+                                }
+
                                 context.push_message(ChatMessage::ToolResult {
                                     call_id: call.id,
                                     tool_name: call.name,
-                                    output: format!("execution error: {}", e),
+                                    output: err_msg,
                                     is_error: true,
                                 });
                             }
@@ -206,6 +399,26 @@ impl AgentLoop {
                     }
                 }
             }
+        }
+
+        let duration_ms = start_time.elapsed().as_millis() as u64;
+        let finished_at = Utc::now().to_rfc3339();
+        if let Some(store) = &self.store {
+            let error_event = ExecutionEvent::AgentError {
+                run_id: context.run_id.clone(),
+                error: format!("exceeded max iterations limit ({})", self.max_iterations),
+            };
+            store.record_event(&EventRecord::new(sequence, error_event))?;
+            store.record_run_completion(
+                &context.run_id,
+                "failed",
+                &finished_at,
+                duration_ms,
+                0,
+                0,
+                0.0,
+                Some("exceeded max iterations limit"),
+            )?;
         }
 
         Err(CortexError::Timeout(self.max_iterations as u64))
@@ -230,6 +443,22 @@ mod tests {
 
         fn execute(&self, _input: &serde_json::Value) -> Result<ToolResult> {
             Ok(ToolResult::success("dummy called"))
+        }
+    }
+
+    struct SecretLeakingTool;
+    impl Tool for SecretLeakingTool {
+        fn definition(&self) -> &ToolDefinition {
+            static DEF: std::sync::OnceLock<ToolDefinition> = std::sync::OnceLock::new();
+            DEF.get_or_init(|| {
+                ToolDefinition::new("secret_tool", "leaks secret", json!({ "type": "object" }))
+            })
+        }
+
+        fn execute(&self, _input: &serde_json::Value) -> Result<ToolResult> {
+            Ok(ToolResult::success(
+                "API Token: sk-live1234567890abcdef12345678",
+            ))
         }
     }
 
@@ -274,6 +503,54 @@ mod tests {
         match err {
             CortexError::Cancelled(_) => {}
             _ => panic!("expected Cancelled error, got {:?}", err),
+        }
+    }
+
+    #[test]
+    fn test_agent_loop_with_store_and_secret_redaction() {
+        let store = Arc::new(RunStore::in_memory().unwrap());
+        let mut context = AgentContext::new("Process with sk-secretkey1234567890abcdef");
+        let model = MockModelProvider::new();
+        let registry = ToolRegistry::new();
+
+        registry.register_tool(SecretLeakingTool).unwrap();
+
+        model.queue_response(ModelOutput::ToolCalls(vec![ToolCall::new(
+            "c1",
+            "secret_tool",
+            json!({ "token": "ghp_1234567890abcdef1234567890abcdef1234" }),
+        )]));
+        model.queue_response(ModelOutput::FinalAnswer("all done".to_string()));
+
+        let agent_loop = AgentLoop::new(5).with_store(Arc::clone(&store));
+        let res = agent_loop.run(&mut context, &model, &registry).unwrap();
+        assert!(res.completed);
+
+        // Verify stored run
+        let run = store.get_run(&res.run_id).unwrap().unwrap();
+        assert_eq!(run.status, "completed");
+
+        // Verify stored events and redactions
+        let events = store.get_events(&res.run_id).unwrap();
+        assert!(!events.is_empty());
+
+        for record in &events {
+            match &record.event {
+                ExecutionEvent::RunStarted { task, .. } => {
+                    assert!(!task.contains("sk-secretkey"));
+                    assert!(task.contains("[REDACTED]"));
+                }
+                ExecutionEvent::ToolStarted { arguments, .. } => {
+                    let arg_str = arguments.to_string();
+                    assert!(!arg_str.contains("ghp_"));
+                    assert!(arg_str.contains("[REDACTED]"));
+                }
+                ExecutionEvent::ToolCompleted { output, .. } => {
+                    assert!(!output.contains("sk-live"));
+                    assert!(output.contains("[REDACTED]"));
+                }
+                _ => {}
+            }
         }
     }
 }

@@ -47,6 +47,11 @@ impl Redactor {
         result
     }
 
+    /// Redact recognized secrets in text, replacing them with `[REDACTED]`.
+    pub fn redact_text(&self, input: &str) -> String {
+        self.redact(input)
+    }
+
     /// Recursively redact strings inside a JSON value.
     pub fn redact_json(&self, val: &serde_json::Value) -> serde_json::Value {
         match val {
