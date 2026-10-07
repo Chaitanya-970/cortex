@@ -166,3 +166,37 @@ fn test_cli_tui_help() {
     assert!(stdout.contains("Launch the interactive terminal control plane"));
     assert!(stdout.contains("--db"));
 }
+
+#[test]
+fn test_cli_run_help() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["run", "--help"])
+        .output()
+        .expect("Failed to execute cortex run --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--model"));
+    assert!(stdout.contains("--api-key"));
+    assert!(stdout.contains("--base-url"));
+    assert!(stdout.contains("--workspace"));
+    assert!(stdout.contains("--max-iterations"));
+    assert!(stdout.contains("--quiet"));
+    assert!(stdout.contains("--json"));
+}
+
+#[test]
+fn test_cli_run_unconfigured_error_guidance() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env_remove("OPENAI_API_KEY")
+        .env_remove("ANTHROPIC_API_KEY")
+        .env_remove("CORTEX_API_KEY")
+        .args(["run", "Inspect codebase", "--model", "gpt-4o"])
+        .output()
+        .expect("Failed to execute cortex run");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not configured"));
+    assert!(stderr.contains("OPENAI_API_KEY"));
+}

@@ -11,6 +11,7 @@
 
 pub mod agent;
 pub mod model;
+pub mod providers;
 pub mod sandbox;
 pub mod storage;
 pub mod tool;
@@ -21,7 +22,11 @@ pub use agent::{
     AgentContext, AgentLoop, AgentRunResult, CancellationToken, ChatMessage, CODING_AGENT_POLICY,
 };
 pub use model::{
-    MockModelProvider, ModelDescriptor, ModelOutput, ModelProvider, ReplayModelProvider, ToolCall,
+    MockModelProvider, ModelDescriptor, ModelOutput, ModelProvider, ModelUsage,
+    ReplayModelProvider, ToolCall,
+};
+pub use providers::{
+    create_model_provider, estimate_cost, AnthropicProvider, OpenAiCompatibleProvider,
 };
 pub use sandbox::{Sandbox, SandboxMode};
 pub use storage::{RunStore, RunSummary};

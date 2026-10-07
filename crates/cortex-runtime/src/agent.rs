@@ -2,7 +2,7 @@
 
 use crate::model::{ModelOutput, ModelProvider, ToolCall};
 use crate::storage::RunStore;
-use crate::tool::ToolRegistry;
+use crate::tool::{ToolDefinition, ToolRegistry};
 use crate::workspace::Workspace;
 use chrono::Utc;
 use cortex_core::{CortexError, EventRecord, ExecutionEvent, Redactor, Result, RunId};
@@ -63,6 +63,8 @@ pub struct AgentContext {
     pub workspace: Option<Arc<Workspace>>,
     /// Current iteration count.
     pub iterations: usize,
+    /// Available tool definitions provided to the model.
+    pub tools: Vec<ToolDefinition>,
 }
 
 impl AgentContext {
@@ -78,6 +80,7 @@ impl AgentContext {
             task: task_str,
             workspace: None,
             iterations: 0,
+            tools: Vec::new(),
         }
     }
 
@@ -90,6 +93,12 @@ impl AgentContext {
     /// Attach a [`Workspace`] boundary to this context.
     pub fn with_workspace(mut self, workspace: Arc<Workspace>) -> Self {
         self.workspace = Some(workspace);
+        self
+    }
+
+    /// Attach tool definitions to this context.
+    pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self {
+        self.tools = tools;
         self
     }
 
@@ -125,7 +134,7 @@ impl CancellationToken {
 }
 
 /// Final summary outcome produced by an agent execution run.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AgentRunResult {
     /// Associated execution run identifier.
     pub run_id: RunId,
@@ -137,6 +146,14 @@ pub struct AgentRunResult {
     pub completed: bool,
     /// Elapsed execution time in milliseconds.
     pub duration_ms: u64,
+    /// Prompt tokens consumed across all model inference steps.
+    pub tokens_prompt: usize,
+    /// Completion tokens generated across all model inference steps.
+    pub tokens_completion: usize,
+    /// Total tokens consumed.
+    pub tokens_total: usize,
+    /// Estimated cost in USD.
+    pub estimated_cost_usd: f64,
 }
 
 /// Coordinates the iterative model $\to$ tool $\to$ result $\to$ model execution loop.
@@ -170,6 +187,12 @@ impl AgentLoop {
         self
     }
 
+    /// Attach an optional persistent [`RunStore`].
+    pub fn with_store_optional(mut self, store: Option<Arc<RunStore>>) -> Self {
+        self.store = store;
+        self
+    }
+
     /// Attach a custom [`Redactor`] for scrubbing sensitive secrets from traces.
     pub fn with_redactor(mut self, redactor: Arc<Redactor>) -> Self {
         self.redactor = redactor;
@@ -183,9 +206,12 @@ impl AgentLoop {
         model: &dyn ModelProvider,
         registry: &ToolRegistry,
     ) -> Result<AgentRunResult> {
+        context.tools = registry.list();
         let start_time = Instant::now();
         let started_at = Utc::now().to_rfc3339();
         let mut sequence: u64 = 1;
+        let mut total_prompt_tokens = 0usize;
+        let mut total_completion_tokens = 0usize;
 
         // Record run start in store
         if let Some(store) = &self.store {
@@ -209,6 +235,11 @@ impl AgentLoop {
             if self.cancellation_token.is_cancelled() {
                 let duration_ms = start_time.elapsed().as_millis() as u64;
                 let finished_at = Utc::now().to_rfc3339();
+                let estimated_cost = crate::providers::estimate_cost(
+                    &model.descriptor().name,
+                    total_prompt_tokens,
+                    total_completion_tokens,
+                );
                 if let Some(store) = &self.store {
                     let cancel_event = ExecutionEvent::RunCancelled {
                         run_id: context.run_id.clone(),
@@ -220,9 +251,9 @@ impl AgentLoop {
                         "cancelled",
                         &finished_at,
                         duration_ms,
-                        0,
-                        0,
-                        0.0,
+                        total_prompt_tokens as u32,
+                        total_completion_tokens as u32,
+                        estimated_cost,
                         Some("agent execution cancelled by request"),
                     )?;
                 }
@@ -250,6 +281,10 @@ impl AgentLoop {
 
             // Generate next action from model
             let output = model.generate(context)?;
+            if let Some(usage) = model.last_usage() {
+                total_prompt_tokens += usage.prompt_tokens;
+                total_completion_tokens += usage.completion_tokens;
+            }
 
             // Emit ModelResponse event
             if let Some(store) = &self.store {
@@ -284,18 +319,29 @@ impl AgentLoop {
                             iterations: context.iterations,
                             duration_ms,
                         };
+                        let estimated_cost = crate::providers::estimate_cost(
+                            &model.descriptor().name,
+                            total_prompt_tokens,
+                            total_completion_tokens,
+                        );
                         store.record_event(&EventRecord::new(sequence, comp_event))?;
                         store.record_run_completion(
                             &context.run_id,
                             "completed",
                             &finished_at,
                             duration_ms,
-                            0,
-                            0,
-                            0.0,
+                            total_prompt_tokens as u32,
+                            total_completion_tokens as u32,
+                            estimated_cost,
                             None,
                         )?;
                     }
+
+                    let estimated_cost = crate::providers::estimate_cost(
+                        &model.descriptor().name,
+                        total_prompt_tokens,
+                        total_completion_tokens,
+                    );
 
                     return Ok(AgentRunResult {
                         run_id: context.run_id.clone(),
@@ -303,6 +349,10 @@ impl AgentLoop {
                         iterations: context.iterations,
                         completed: true,
                         duration_ms,
+                        tokens_prompt: total_prompt_tokens,
+                        tokens_completion: total_completion_tokens,
+                        tokens_total: total_prompt_tokens + total_completion_tokens,
+                        estimated_cost_usd: estimated_cost,
                     });
                 }
                 ModelOutput::ToolCalls(calls) => {
@@ -410,15 +460,20 @@ impl AgentLoop {
                 run_id: context.run_id.clone(),
                 error: format!("exceeded max iterations limit ({})", self.max_iterations),
             };
+            let estimated_cost = crate::providers::estimate_cost(
+                &model.descriptor().name,
+                total_prompt_tokens,
+                total_completion_tokens,
+            );
             store.record_event(&EventRecord::new(sequence, error_event))?;
             store.record_run_completion(
                 &context.run_id,
                 "failed",
                 &finished_at,
                 duration_ms,
-                0,
-                0,
-                0.0,
+                total_prompt_tokens as u32,
+                total_completion_tokens as u32,
+                estimated_cost,
                 Some("exceeded max iterations limit"),
             )?;
         }

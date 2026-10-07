@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Live Model Providers & Autonomous CLI Harness
+
+#### Added
+- Live model provider abstraction supporting OpenAI-compatible endpoints (`/chat/completions`) and Anthropic Claude (`/messages` tool calling).
+- Native support for OpenAI (`gpt-4o`, `gpt-4o-mini`), Anthropic Claude (`claude-3-5-sonnet`, `claude-3-5-haiku`), DeepSeek, Groq, and local Ollama (`ollama/<model>` at `http://localhost:11434/v1`).
+- Real-time token usage tracking (`prompt_tokens`, `completion_tokens`, `total_tokens`) and USD cost calculation integrated into `AgentLoop` and SQLite persistence.
+- Full autonomous agent execution via `cortex run "<prompt>"` with workspace boundaries, tool registration, configurable iterations, and JSON output mode.
+
 ### Repository & Workspace Bootstrap
 
 #### Added
