@@ -136,7 +136,7 @@ impl ReplayModelProvider {
         }
     }
 
-    /// Construct a [`ReplayModelProvider`] by extracting recorded model responses from a [`RunStore`].
+    /// Construct a [`ReplayModelProvider`] by extracting recorded model responses from a [`crate::storage::RunStore`].
     pub fn from_store(
         store: &crate::storage::RunStore,
         run_id: &cortex_core::RunId,
