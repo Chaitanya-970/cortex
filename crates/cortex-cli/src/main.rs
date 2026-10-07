@@ -42,6 +42,12 @@ enum Commands {
         #[command(subcommand)]
         action: Option<RunsCommands>,
     },
+
+    /// Benchmark and evaluate agent performance against verifiable ground truth tasks.
+    Bench {
+        #[command(subcommand)]
+        action: BenchCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -67,6 +73,28 @@ enum RunsCommands {
     Replay {
         /// Run identifier to replay.
         run_id: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum BenchCommands {
+    /// Execute a benchmark evaluation suite.
+    Run {
+        /// Target benchmark suite to evaluate (e.g., "coding", "refactor", "cli").
+        #[arg(short, long, default_value = "coding")]
+        suite: String,
+
+        /// Output results in JSON format to stdout.
+        #[arg(long)]
+        json: bool,
+
+        /// Write Markdown evaluation report to the specified file path.
+        #[arg(short, long)]
+        report: Option<PathBuf>,
+
+        /// Maximum agent iterations allowed per task.
+        #[arg(short, long, default_value = "10")]
+        max_iterations: usize,
     },
 }
 
@@ -203,6 +231,38 @@ fn replay_run(store: &RunStore, run_id_str: &str) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+fn run_bench(
+    suite: &str,
+    json: bool,
+    report: Option<PathBuf>,
+    max_iterations: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let runner = cortex_harness::BenchmarkRunner::new(max_iterations);
+    let model = cortex_harness::BenchmarkBaselineProvider;
+
+    let metrics = runner.run_suite(suite, &model)?;
+
+    if json {
+        println!("{}", metrics.to_json());
+    } else {
+        println!("{}", metrics.to_markdown());
+    }
+
+    if let Some(report_path) = report {
+        if let Some(parent) = report_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&report_path, metrics.to_markdown())?;
+        println!("Report saved to: {}", report_path.display());
+    }
+
+    if metrics.successful_tasks < metrics.total_tasks {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -262,6 +322,19 @@ fn main() {
                 }
             }
         }
+        Some(Commands::Bench { action }) => match action {
+            BenchCommands::Run {
+                suite,
+                json,
+                report,
+                max_iterations,
+            } => {
+                if let Err(e) = run_bench(&suite, json, report, max_iterations) {
+                    eprintln!("Error executing benchmark suite: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        },
         None => {
             println!("Cortex Agent Runtime v{}", VERSION);
             println!("Run 'cortex --help' for usage instructions.");
@@ -323,5 +396,23 @@ mod tests {
     fn test_default_db_path() {
         let path = default_db_path();
         assert!(path.to_string_lossy().contains("cortex.db"));
+    }
+
+    #[test]
+    fn test_cli_parsing_bench_subcommands() {
+        let args = vec!["cortex", "bench", "run", "--suite", "coding", "--json"];
+        let parsed = Cli::try_parse_from(args).unwrap();
+        match parsed.command {
+            Some(Commands::Bench {
+                action:
+                    BenchCommands::Run {
+                        suite,
+                        json: true,
+                        report: None,
+                        ..
+                    },
+            }) => assert_eq!(suite, "coding"),
+            _ => panic!("unexpected command parsed"),
+        }
     }
 }

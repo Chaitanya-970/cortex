@@ -189,6 +189,7 @@ dependencies = [
  "chrono",
  "clap",
  "cortex-core",
+ "cortex-harness",
  "cortex-runtime",
  "serde_json",
  "tracing",

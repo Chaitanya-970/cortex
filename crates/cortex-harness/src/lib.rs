@@ -15,7 +15,7 @@ pub mod task;
 
 pub use metrics::BenchmarkMetrics;
 pub use runner::BenchmarkRunner;
-pub use suite::{available_suites, get_suite_tasks};
+pub use suite::{available_suites, get_suite_tasks, BenchmarkBaselineProvider};
 pub use task::{BenchmarkTask, TaskFile, TaskOutcome};
 
 /// Current semantic version of the Cortex harness crate.
@@ -122,5 +122,17 @@ mod tests {
         assert_eq!(outcome.step_count, 2);
         assert_eq!(outcome.tool_error_count, 0);
         assert!(outcome.error_message.is_none());
+    }
+
+    #[test]
+    fn test_benchmark_baseline_provider_coding_suite() {
+        let runner = BenchmarkRunner::new(5);
+        let model = BenchmarkBaselineProvider;
+        let metrics = runner.run_suite("coding", &model).unwrap();
+
+        assert_eq!(metrics.total_tasks, 5);
+        assert_eq!(metrics.successful_tasks, 5);
+        assert!((metrics.success_rate - 1.0).abs() < 1e-6);
+        assert_eq!(metrics.tool_error_count, 0);
     }
 }

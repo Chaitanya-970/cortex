@@ -11,7 +11,7 @@
         "content": "pub fn greet(name: &str) -> String {\n    format!(\"Hello, {}!\", name)\n}\n"
       }
     ],
-    "verification_command": "rustc --crate-type lib src/lib.rs -o /dev/null",
+    "verification_command": "rustc --crate-type lib src/lib.rs",
     "expected_exit_code": 0
   },
   {

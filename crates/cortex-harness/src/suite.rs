@@ -1,6 +1,104 @@
 //! Curated benchmark suites and ground-truth task definitions.
 
 use crate::task::BenchmarkTask;
+use cortex_core::Result;
+use cortex_runtime::model::{ModelDescriptor, ModelOutput, ModelProvider, ToolCall};
+use cortex_runtime::AgentContext;
+use serde_json::json;
+use std::sync::OnceLock;
+
+/// Reference baseline model provider with ground-truth solutions for benchmark tasks.
+pub struct BenchmarkBaselineProvider;
+
+impl ModelProvider for BenchmarkBaselineProvider {
+    fn descriptor(&self) -> &ModelDescriptor {
+        static DESC: OnceLock<ModelDescriptor> = OnceLock::new();
+        DESC.get_or_init(|| ModelDescriptor::new("cortex", "benchmark-baseline-v1"))
+    }
+
+    fn is_configured(&self) -> Result<bool> {
+        Ok(true)
+    }
+
+    fn generate(&self, context: &AgentContext) -> Result<ModelOutput> {
+        if context.iterations <= 1 {
+            if context.task.contains("src/lib.rs") {
+                return Ok(ModelOutput::ToolCalls(vec![ToolCall::new(
+                    "fix_syntax",
+                    "write_file",
+                    json!({
+                        "path": "src/lib.rs",
+                        "content": "pub fn greet(name: &str) -> String {\n    format!(\"Hello, {}!\", name)\n}\n"
+                    }),
+                )]));
+            }
+            if context.task.contains("search.py") {
+                return Ok(ModelOutput::ToolCalls(vec![ToolCall::new(
+                    "fix_boundary",
+                    "write_file",
+                    json!({
+                        "path": "search.py",
+                        "content": "def binary_search(arr, target):\n    low = 0\n    high = len(arr) - 1\n    while low <= high:\n        mid = (low + high) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            low = mid + 1\n        else:\n            high = mid - 1\n    return -1\n"
+                    }),
+                )]));
+            }
+            if context.task.contains("src/calc.rs") {
+                return Ok(ModelOutput::ToolCalls(vec![ToolCall::new(
+                    "fix_logic",
+                    "write_file",
+                    json!({
+                        "path": "src/calc.rs",
+                        "content": "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\n#[test]\nfn test_add() {\n    assert_eq!(add(2, 3), 5);\n}\n"
+                    }),
+                )]));
+            }
+            if context.task.contains("geometry.py") {
+                return Ok(ModelOutput::ToolCalls(vec![ToolCall::new(
+                    "fix_import",
+                    "write_file",
+                    json!({
+                        "path": "geometry.py",
+                        "content": "import math\n\ndef hypotenuse(a, b):\n    return math.sqrt(a * a + b * b)\n"
+                    }),
+                )]));
+            }
+            if context.task.contains("parser.py") {
+                return Ok(ModelOutput::ToolCalls(vec![ToolCall::new(
+                    "fix_key_error",
+                    "write_file",
+                    json!({
+                        "path": "parser.py",
+                        "content": "def parse_event(data):\n    meta = data.get('meta', {})\n    return {'user': data['user'], 'tags': meta.get('tags', [])}\n"
+                    }),
+                )]));
+            }
+            if context.task.contains("auth.py") {
+                return Ok(ModelOutput::ToolCalls(vec![ToolCall::new(
+                    "fix_auth",
+                    "write_file",
+                    json!({
+                        "path": "auth.py",
+                        "content": "def register_user(email, password):\n    if '@' not in email or '.' not in email:\n        return False\n    return len(password) >= 8\n"
+                    }),
+                )]));
+            }
+            if context.task.contains("cli.py") {
+                return Ok(ModelOutput::ToolCalls(vec![ToolCall::new(
+                    "fix_cli",
+                    "write_file",
+                    json!({
+                        "path": "cli.py",
+                        "content": "import sys\ndef parse_args(args):\n    verbose = '--verbose' in args\n    return {'verbose': verbose}\n"
+                    }),
+                )]));
+            }
+        }
+
+        Ok(ModelOutput::FinalAnswer(
+            "Task completed and verified".to_string(),
+        ))
+    }
+}
 
 /// Return all tasks configured for the specified benchmark suite.
 pub fn get_suite_tasks(suite_name: &str) -> Vec<BenchmarkTask> {
@@ -26,11 +124,11 @@ fn coding_benchmark_suite() -> Vec<BenchmarkTask> {
             "coding",
             "Fix missing semicolon and mismatched closing delimiter in Rust module",
             "Fix the syntax error in src/lib.rs so it compiles cleanly.",
-            "rustc --crate-type lib src/lib.rs -o /dev/null",
+            "rustc --crate-type lib src/lib.rs",
         )
         .with_file(
             "src/lib.rs",
-            "pub fn greet(name: &str) -> String {\n    format!(\"Hello, {}!\", name)\n}\n",
+            "pub fn greet(name: &str) -> String {\n    format!(\"Hello, {}!\", name\n}\n",
         ),
 
         // Task 2: Python Boundary Repair

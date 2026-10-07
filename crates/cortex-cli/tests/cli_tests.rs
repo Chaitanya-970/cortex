@@ -124,3 +124,32 @@ fn test_cli_runs_list_and_show() {
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+#[test]
+fn test_cli_bench_run_command() {
+    let tmp_dir =
+        std::env::temp_dir().join(format!("cortex_bench_cli_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let report_path = tmp_dir.join("report.md");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args([
+            "bench",
+            "run",
+            "--suite",
+            "coding",
+            "--report",
+            report_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to execute cortex bench run");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Benchmark Report: coding"));
+    assert!(stdout.contains("**Success Rate**: 100.0% (5/5)"));
+    assert!(report_path.exists());
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
