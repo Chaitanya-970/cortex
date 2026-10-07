@@ -1,21 +1,28 @@
 //! # cortex-runtime
 //!
-//! Runtime abstractions, tool execution contracts, model interfaces, and
-//! sandboxing boundaries for the Cortex agent harness.
+//! Runtime abstractions, tool execution contracts, model interfaces, workspace boundaries,
+//! and sandboxing boundaries for the Cortex agent harness.
 //!
 //! Cortex strictly separates model generation from runtime execution authority:
 //! models propose actions, and the runtime validates, authorizes, and executes
-//! them within bounded sandboxes.
+//! them within bounded workspaces.
 
 #![deny(missing_docs)]
 
+pub mod agent;
 pub mod model;
 pub mod sandbox;
 pub mod tool;
+pub mod tools;
+pub mod workspace;
 
-pub use model::{ModelDescriptor, ModelProvider};
+pub use agent::{
+    AgentContext, AgentLoop, AgentRunResult, CancellationToken, ChatMessage, CODING_AGENT_POLICY,
+};
+pub use model::{MockModelProvider, ModelDescriptor, ModelOutput, ModelProvider, ToolCall};
 pub use sandbox::{Sandbox, SandboxMode};
 pub use tool::{validate_schema, Tool, ToolDefinition, ToolRegistry, ToolResult};
+pub use workspace::Workspace;
 
 /// Current semantic version of the Cortex runtime crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
