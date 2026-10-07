@@ -60,6 +60,28 @@ pub enum ModelOutput {
     FinalAnswer(String),
 }
 
+/// Token usage metrics returned by model inference calls.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelUsage {
+    /// Number of tokens in the prompt context.
+    pub prompt_tokens: usize,
+    /// Number of tokens generated in the completion.
+    pub completion_tokens: usize,
+    /// Total tokens consumed.
+    pub total_tokens: usize,
+}
+
+impl ModelUsage {
+    /// Create a new [`ModelUsage`] record.
+    pub fn new(prompt_tokens: usize, completion_tokens: usize) -> Self {
+        Self {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens: prompt_tokens + completion_tokens,
+        }
+    }
+}
+
 /// Abstract contract for LLM inference providers.
 ///
 /// In Cortex, the model layer proposes structured actions.
@@ -74,6 +96,11 @@ pub trait ModelProvider: Send + Sync {
 
     /// Generate the next structured response given current agent context.
     fn generate(&self, context: &AgentContext) -> Result<ModelOutput>;
+
+    /// Return token usage reported from the most recent inference call, if available.
+    fn last_usage(&self) -> Option<ModelUsage> {
+        None
+    }
 }
 
 /// Scripted mock model provider for deterministic testing and integration evaluation.
