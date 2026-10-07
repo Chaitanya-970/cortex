@@ -1,0 +1,18 @@
+[package]
+name = "cortex-harness"
+description = "Evaluation runner, benchmark suites, and metric frameworks for Cortex"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+cortex-core = { workspace = true }
+cortex-runtime = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }

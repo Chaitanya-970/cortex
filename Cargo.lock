@@ -207,6 +207,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cortex-harness"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "chrono",
+ "cortex-core",
+ "cortex-runtime",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "cortex-runtime"
 version = "0.1.0-alpha.1"
 dependencies = [

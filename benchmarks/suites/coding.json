@@ -1,0 +1,89 @@
+[
+  {
+    "id": "coding-01-rust-syntax",
+    "name": "Rust Syntax Error Repair",
+    "suite": "coding",
+    "description": "Fix missing semicolon and mismatched closing delimiter in Rust module",
+    "prompt": "Fix the syntax error in src/lib.rs so it compiles cleanly.",
+    "initial_files": [
+      {
+        "path": "src/lib.rs",
+        "content": "pub fn greet(name: &str) -> String {\n    format!(\"Hello, {}!\", name)\n}\n"
+      }
+    ],
+    "verification_command": "rustc --crate-type lib src/lib.rs -o /dev/null",
+    "expected_exit_code": 0
+  },
+  {
+    "id": "coding-02-python-boundary",
+    "name": "Python Boundary Off-by-One Repair",
+    "suite": "coding",
+    "description": "Fix off-by-one boundary bug in binary search implementation",
+    "prompt": "Fix the boundary condition in binary_search in search.py to pass test_search.py.",
+    "initial_files": [
+      {
+        "path": "search.py",
+        "content": "def binary_search(arr, target):\n    low = 0\n    high = len(arr) - 2  # bug: off by one\n    while low <= high:\n        mid = (low + high) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            low = mid + 1\n        else:\n            high = mid - 1\n    return -1\n"
+      },
+      {
+        "path": "test_search.py",
+        "content": "import sys\nfrom search import binary_search\n\narr = [1, 3, 5, 7, 9]\nassert binary_search(arr, 9) == 4, 'Failed to find last element'\nassert binary_search(arr, 1) == 0, 'Failed to find first element'\nassert binary_search(arr, 6) == -1, 'Failed on missing element'\nprint('All tests passed.')\n"
+      }
+    ],
+    "verification_command": "python3 test_search.py",
+    "expected_exit_code": 0
+  },
+  {
+    "id": "coding-03-rust-logic",
+    "name": "Rust Logic Inversion Repair",
+    "suite": "coding",
+    "description": "Correct arithmetic inversion in calculation helper",
+    "prompt": "Fix the logic bug in src/calc.rs so test suite passes.",
+    "initial_files": [
+      {
+        "path": "src/calc.rs",
+        "content": "pub fn add(a: i32, b: i32) -> i32 {\n    a - b // bug: subtraction instead of addition\n}\n\n#[test]\nfn test_add() {\n    assert_eq!(add(2, 3), 5);\n}\n"
+      }
+    ],
+    "verification_command": "rustc --test src/calc.rs -o /tmp/calc_test && /tmp/calc_test",
+    "expected_exit_code": 0
+  },
+  {
+    "id": "coding-04-python-import",
+    "name": "Python Missing Import Repair",
+    "suite": "coding",
+    "description": "Add missing standard library import in geometry helper",
+    "prompt": "Fix the undefined name error in geometry.py so test_geometry.py passes.",
+    "initial_files": [
+      {
+        "path": "geometry.py",
+        "content": "# missing: import math\ndef hypotenuse(a, b):\n    return math.sqrt(a * a + b * b)\n"
+      },
+      {
+        "path": "test_geometry.py",
+        "content": "from geometry import hypotenuse\nassert abs(hypotenuse(3, 4) - 5.0) < 1e-6\nprint('Geometry tests passed.')\n"
+      }
+    ],
+    "verification_command": "python3 test_geometry.py",
+    "expected_exit_code": 0
+  },
+  {
+    "id": "coding-05-python-exception",
+    "name": "Python KeyError Exception Repair",
+    "suite": "coding",
+    "description": "Safely handle optional dictionary key in event parser",
+    "prompt": "Fix the KeyError exception when parsing payload without 'meta' in parser.py.",
+    "initial_files": [
+      {
+        "path": "parser.py",
+        "content": "def parse_event(data):\n    # bug: direct access instead of get\n    meta = data['meta']\n    return {'user': data['user'], 'tags': meta.get('tags', [])}\n"
+      },
+      {
+        "path": "test_parser.py",
+        "content": "from parser import parse_event\nres = parse_event({'user': 'alice'})\nassert res['user'] == 'alice'\nassert res['tags'] == []\nprint('Parser tests passed.')\n"
+      }
+    ],
+    "verification_command": "python3 test_parser.py",
+    "expected_exit_code": 0
+  }
+]

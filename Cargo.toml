@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/cortex-core",
     "crates/cortex-runtime",
+    "crates/cortex-harness",
     "crates/cortex-cli",
 ]
 default-members = ["crates/cortex-cli"]
@@ -22,6 +23,7 @@ categories = ["command-line-utilities", "development-tools"]
 [workspace.dependencies]
 cortex-core = { path = "crates/cortex-core", version = "0.1.0-alpha.1" }
 cortex-runtime = { path = "crates/cortex-runtime", version = "0.1.0-alpha.1" }
+cortex-harness = { path = "crates/cortex-harness", version = "0.1.0-alpha.1" }
 thiserror = "1.0"
 tracing = "0.1"
 clap = { version = "4.5", features = ["derive"] }
