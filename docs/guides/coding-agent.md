@@ -1,26 +1,59 @@
-# Coding Agent
+# Coding Agent Guide
 
-Cortex's coding agent should follow:
+Cortex's coding agent operates as an autonomous worker confined to an explicitly configured repository workspace.
 
-1. Inspect
-2. Understand
-3. Plan
-4. Modify minimally
-5. Run tests
-6. Inspect failures
-7. Iterate
-8. Review final diff
-9. Verify
-10. Report honestly
+---
 
-The agent should operate inside an explicitly configured workspace.
+## 1. Core Operational Principles
 
-Initial Git operations:
+The coding agent adheres to a strict policy:
 
-- status
-- diff
-- log
-- branch
-- commit
+1. **Inspect before modifying**: Read existing files, directory structures, and configurations before proposing changes.
+2. **Understand existing code**: Respect the project's architecture, dependencies, and patterns.
+3. **Make minimal changes**: Solve the task with the smallest, most targeted edits possible.
+4. **Preserve project conventions**: Follow the formatting, linting, and naming rules established in the repository.
+5. **Run relevant tests**: Execute tests via the shell tool to evaluate changes.
+6. **Inspect failures**: Analyze test failure outputs carefully instead of guessing fixes.
+7. **Iterate**: Refine changes until all relevant checks pass.
+8. **Review final diff**: Inspect `git diff` before finalizing a commit.
+9. **Never claim success without verification**: Confirm that automated tests pass before reporting completion.
 
-Git push should remain disabled until explicitly implemented and protected by permission policy.
+---
+
+## 2. Workspace Boundary Enforcement
+
+All filesystem and process operations are bound to a [`Workspace`](crates/cortex-runtime/src/workspace.rs):
+
+- Every file path passed to tools is canonicalized and verified against the workspace root.
+- Path traversal attempts (`../../`, symlink escapes, or absolute paths outside the workspace) are blocked with `CortexError::PermissionDenied`.
+- Unrelated files outside the workspace cannot be inspected or altered.
+
+---
+
+## 3. Available Tools
+
+### Filesystem
+- `read_file`: Reads content from a file within the workspace with optional offset and line limits.
+- `write_file`: Writes content to a file, safely creating parent directories if needed.
+- `list_directory`: Lists directory entries within the workspace.
+
+### Shell Execution
+- `shell`: Executes commands in the workspace directory with output capture and sensitive environment variable scrubbing (`AWS_SECRET_ACCESS_KEY`, API tokens).
+
+### Git Operations
+- `git_status`: Displays modified, untracked, and staged files.
+- `git_diff`: Displays uncommitted changes.
+- `git_log`: Displays recent commit history.
+- `git_branch`: Creates or checks out a git branch.
+- `git_commit`: Stages specified files and commits with a message.
+- `git_push`: **Strictly disabled** by security policy. Any call to push returns `CortexError::PermissionDenied`.
+
+---
+
+## 4. End-to-End Fixture Verification
+
+The coding agent workflow is verified through an automated integration test (`tests/coding_agent_fixture_test.rs`) that:
+1. Provisions an intentionally broken test repository.
+2. Instructs the agent to inspect the code, execute tests, and observe initial failure.
+3. Fixes the underlying code, re-runs tests to observe success, and commits the result.
+4. Verifies that unrelated files remain untouched and workspace boundaries are preserved.
