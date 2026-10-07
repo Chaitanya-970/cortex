@@ -8,17 +8,18 @@ implemented
 - core domain identifiers agent id run id session id
 - error taxonomy cortex error
 - trait contracts model provider tool sandbox
-- cli harness cortex
-- ci checks fmt check clippy test doc build
+- autonomous coding agent loop with filesystem, shell, and git tool registry
+- structured event tracing and sqlite persistence (run store & replay)
+- reproducible evaluation harness with curated coding/refactor/cli benchmark suites
+- terminal-native interactive control plane (ratatui / crossterm)
+- cli harness cortex (status, check, runs, bench, tui)
+- ci checks fmt check clippy test doc deny
 
 planned
-- agent loop and execution coordinator
-- model providers gemma and external apis
-- tool registry filesystem shell and git tools
 - docker container sandboxing and capability permissions
-- structured event tracing and sqlite persistence
 - multi agent message bus
-- deterministic evaluation harness
+- distributed scheduler and cron jobs
+- mcp protocol integration
 
 ## runtime authority
 

@@ -153,3 +153,16 @@ fn test_cli_bench_run_command() {
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+#[test]
+fn test_cli_tui_help() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["tui", "--help"])
+        .output()
+        .expect("Failed to execute cortex tui --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Launch the interactive terminal control plane"));
+    assert!(stdout.contains("--db"));
+}
