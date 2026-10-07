@@ -5,8 +5,12 @@
 
 use clap::{Parser, Subcommand};
 use cortex_core::{RunId, VERSION};
-use cortex_runtime::{RunStore, RunSummary};
+use cortex_runtime::{
+    create_model_provider, tools, AgentContext, AgentLoop, RunStore, RunSummary, ToolRegistry,
+    Workspace,
+};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Cortex - An open-source runtime and harness for autonomous AI workers.
 #[derive(Parser, Debug)]
@@ -35,6 +39,38 @@ enum Commands {
     Run {
         /// Task prompt or instructions for the agent.
         prompt: String,
+
+        /// Model identifier (e.g., gpt-4o-mini, gpt-4o, claude-3-5-sonnet-20241022, deepseek-chat, or ollama/llama3.1).
+        #[arg(short, long, env = "CORTEX_MODEL", default_value = "gpt-4o-mini")]
+        model: String,
+
+        /// Provider API key (or set OPENAI_API_KEY / ANTHROPIC_API_KEY).
+        #[arg(long, env = "CORTEX_API_KEY")]
+        api_key: Option<String>,
+
+        /// Custom provider base URL (or set OPENAI_BASE_URL / ANTHROPIC_BASE_URL).
+        #[arg(long, env = "CORTEX_BASE_URL")]
+        base_url: Option<String>,
+
+        /// Working directory boundary for the agent. Defaults to current directory.
+        #[arg(short, long)]
+        workspace: Option<PathBuf>,
+
+        /// Maximum autonomous loop iterations allowed.
+        #[arg(short = 'i', long, default_value = "15")]
+        max_iterations: usize,
+
+        /// Path to SQLite runs database. Defaults to ~/.cortex/cortex.db.
+        #[arg(long)]
+        db: Option<PathBuf>,
+
+        /// Suppress interactive progress and only output final answer.
+        #[arg(short, long)]
+        quiet: bool,
+
+        /// Output the final run result in JSON format.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Manage and inspect recorded execution runs.
@@ -270,6 +306,129 @@ fn run_bench(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn execute_run(
+    prompt: &str,
+    model: &str,
+    api_key: Option<String>,
+    base_url: Option<String>,
+    workspace: Option<PathBuf>,
+    max_iterations: usize,
+    db: Option<PathBuf>,
+    quiet: bool,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let ws_path = match workspace {
+        Some(p) => p,
+        None => std::env::current_dir()?,
+    };
+
+    let ws = Arc::new(Workspace::new(&ws_path)?);
+
+    // Build tool registry with all workspace-confined tools
+    let registry = ToolRegistry::new();
+    registry.register(Arc::new(tools::ReadFileTool::new(ws.clone())))?;
+    registry.register(Arc::new(tools::WriteFileTool::new(ws.clone())))?;
+    registry.register(Arc::new(tools::ListDirTool::new(ws.clone())))?;
+    registry.register(Arc::new(tools::ShellTool::new(ws.clone())))?;
+    registry.register(Arc::new(tools::GitStatusTool::new(ws.clone())))?;
+    registry.register(Arc::new(tools::GitDiffTool::new(ws.clone())))?;
+    registry.register(Arc::new(tools::GitCommitTool::new(ws.clone())))?;
+    registry.register(Arc::new(tools::GitLogTool::new(ws.clone())))?;
+    registry.register(Arc::new(tools::GitBranchTool::new(ws.clone())))?;
+
+    // Instantiate model provider
+    let provider = create_model_provider(model, api_key, base_url)?;
+    if !provider.is_configured()? {
+        eprintln!(
+            "Error: Model provider '{}' for model '{}' is not configured.",
+            provider.descriptor().provider,
+            model
+        );
+        eprintln!("\nTo configure authentication for this model provider:");
+        eprintln!("  • Via environment: export OPENAI_API_KEY=\"sk-...\"       # OpenAI / DeepSeek / Groq");
+        eprintln!(
+            "                     export ANTHROPIC_API_KEY=\"sk-ant-...\" # Anthropic Claude"
+        );
+        eprintln!(
+            "  • Via CLI flag:    cortex run \"{}\" --api-key \"...\"",
+            prompt
+        );
+        eprintln!(
+            "  • For local Ollama: cortex run \"{}\" --model ollama/llama3.1",
+            prompt
+        );
+        std::process::exit(1);
+    }
+
+    let db_path = db.unwrap_or_else(default_db_path);
+    let store = Arc::new(RunStore::open(&db_path)?);
+
+    let mut context = AgentContext::new(prompt).with_workspace(ws.clone());
+    let run_id = context.run_id.clone();
+
+    if !quiet && !json {
+        println!("{:=<80}", "");
+        println!("Cortex Autonomous Agent Execution");
+        println!("Run ID:     {}", run_id);
+        println!("Model:      {} ({})", model, provider.descriptor().provider);
+        println!("Workspace:  {}", ws.root().display());
+        println!("Task:       {}", prompt);
+        println!("{:-<80}", "");
+    }
+
+    let agent = AgentLoop::new(max_iterations).with_store(store);
+    let result = agent.run(&mut context, provider.as_ref(), &registry)?;
+
+    if json {
+        let json_output = serde_json::json!({
+            "run_id": result.run_id.as_str(),
+            "task": prompt,
+            "status": if result.completed { "completed" } else { "max_iterations_reached" },
+            "final_answer": result.final_answer,
+            "iterations": result.iterations,
+            "duration_ms": result.duration_ms,
+            "tokens": {
+                "prompt": result.tokens_prompt,
+                "completion": result.tokens_completion,
+                "total": result.tokens_total,
+            },
+            "estimated_cost_usd": result.estimated_cost_usd,
+        });
+        println!("{}", serde_json::to_string_pretty(&json_output)?);
+    } else {
+        if !quiet {
+            println!("\n[Final Answer]");
+        }
+        println!("{}", result.final_answer);
+        if !quiet {
+            println!("\n{:-<80}", "");
+            println!("Execution Summary:");
+            println!(
+                "  Status:           {}",
+                if result.completed {
+                    "completed"
+                } else {
+                    "max iterations reached"
+                }
+            );
+            println!("  Iterations:       {}", result.iterations);
+            println!("  Duration:         {} ms", result.duration_ms);
+            println!("  Tokens (prompt):  {}", result.tokens_prompt);
+            println!("  Tokens (compl):   {}", result.tokens_completion);
+            println!("  Tokens (total):   {}", result.tokens_total);
+            println!("  Estimated Cost:   ${:.6}", result.estimated_cost_usd);
+            println!(
+                "  Inspect Trace:    cortex runs show {} --verbose",
+                result.run_id
+            );
+            println!("{:=<80}", "");
+        }
+    }
+
+    Ok(())
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -286,13 +445,31 @@ fn main() {
             println!("  [✓] Architecture traits defined");
             println!("  [✓] Ready for runtime development");
         }
-        Some(Commands::Run { prompt }) => {
-            eprintln!("cortex: 'run' command received task: \"{}\"", prompt);
-            eprintln!(
-                "Note: Agent execution loop is planned for upcoming milestones. \
-                 Initial workspace provides foundations and interfaces."
-            );
-            std::process::exit(1);
+        Some(Commands::Run {
+            prompt,
+            model,
+            api_key,
+            base_url,
+            workspace,
+            max_iterations,
+            db,
+            quiet,
+            json,
+        }) => {
+            if let Err(e) = execute_run(
+                &prompt,
+                &model,
+                api_key,
+                base_url,
+                workspace,
+                max_iterations,
+                db,
+                quiet,
+                json,
+            ) {
+                eprintln!("Error executing agent task: {}", e);
+                std::process::exit(1);
+            }
         }
         Some(Commands::Runs { action }) => {
             let db_path = default_db_path();
@@ -445,6 +622,103 @@ mod tests {
         let parsed_no_db = Cli::try_parse_from(args_no_db).unwrap();
         match parsed_no_db.command {
             Some(Commands::Tui { db: None }) => {}
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_run_default() {
+        let args = vec!["cortex", "run", "Fix the failing test in main.rs"];
+        let parsed = Cli::try_parse_from(args).unwrap();
+        match parsed.command {
+            Some(Commands::Run {
+                prompt,
+                model,
+                api_key,
+                base_url,
+                workspace,
+                max_iterations,
+                quiet,
+                json,
+                ..
+            }) => {
+                assert_eq!(prompt, "Fix the failing test in main.rs");
+                assert_eq!(model, "gpt-4o-mini");
+                assert!(api_key.is_none());
+                assert!(base_url.is_none());
+                assert!(workspace.is_none());
+                assert_eq!(max_iterations, 15);
+                assert!(!quiet);
+                assert!(!json);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_run_custom_flags() {
+        let args = vec![
+            "cortex",
+            "run",
+            "Refactor auth logic",
+            "--model",
+            "claude-3-5-sonnet-20241022",
+            "--api-key",
+            "sk-ant-test",
+            "--workspace",
+            "/tmp/workspace",
+            "--max-iterations",
+            "25",
+            "--quiet",
+            "--json",
+        ];
+        let parsed = Cli::try_parse_from(args).unwrap();
+        match parsed.command {
+            Some(Commands::Run {
+                prompt,
+                model,
+                api_key,
+                workspace,
+                max_iterations,
+                quiet,
+                json,
+                ..
+            }) => {
+                assert_eq!(prompt, "Refactor auth logic");
+                assert_eq!(model, "claude-3-5-sonnet-20241022");
+                assert_eq!(api_key.as_deref(), Some("sk-ant-test"));
+                assert_eq!(workspace, Some(PathBuf::from("/tmp/workspace")));
+                assert_eq!(max_iterations, 25);
+                assert!(quiet);
+                assert!(json);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_run_ollama() {
+        let args = vec![
+            "cortex",
+            "run",
+            "Analyze logs",
+            "--model",
+            "ollama/llama3.1",
+            "--base-url",
+            "http://localhost:11434/v1",
+        ];
+        let parsed = Cli::try_parse_from(args).unwrap();
+        match parsed.command {
+            Some(Commands::Run {
+                prompt,
+                model,
+                base_url,
+                ..
+            }) => {
+                assert_eq!(prompt, "Analyze logs");
+                assert_eq!(model, "ollama/llama3.1");
+                assert_eq!(base_url.as_deref(), Some("http://localhost:11434/v1"));
+            }
             _ => panic!("unexpected command parsed"),
         }
     }
