@@ -15,7 +15,7 @@ pub mod tool;
 
 pub use model::{ModelDescriptor, ModelProvider};
 pub use sandbox::{Sandbox, SandboxMode};
-pub use tool::{Tool, ToolDefinition};
+pub use tool::{validate_schema, Tool, ToolDefinition, ToolRegistry, ToolResult};
 
 /// Current semantic version of the Cortex runtime crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -27,11 +27,18 @@ mod tests {
     struct DummyTool;
     impl Tool for DummyTool {
         fn definition(&self) -> &ToolDefinition {
-            static DEF: ToolDefinition = ToolDefinition {
-                name: String::new(),
-                description: String::new(),
-            };
-            &DEF
+            static DEF: std::sync::OnceLock<ToolDefinition> = std::sync::OnceLock::new();
+            DEF.get_or_init(|| {
+                ToolDefinition::new(
+                    "dummy",
+                    "A dummy test tool",
+                    serde_json::json!({ "type": "object" }),
+                )
+            })
+        }
+
+        fn execute(&self, _input: &serde_json::Value) -> cortex_core::Result<ToolResult> {
+            Ok(ToolResult::success("dummy output"))
         }
     }
 
@@ -43,13 +50,19 @@ mod tests {
     #[test]
     fn test_dummy_tool_contract() {
         let tool = DummyTool;
-        assert_eq!(tool.name(), "");
+        assert_eq!(tool.name(), "dummy");
         assert!(tool.is_available().unwrap());
+        let res = tool.execute(&serde_json::json!({})).unwrap();
+        assert_eq!(res.output, "dummy output");
     }
 
     #[test]
     fn test_tool_definition() {
-        let def = ToolDefinition::new("read_file", "Reads file contents from disk");
+        let def = ToolDefinition::new(
+            "read_file",
+            "Reads file contents from disk",
+            serde_json::json!({ "type": "object" }),
+        );
         assert_eq!(def.name, "read_file");
         assert_eq!(def.description, "Reads file contents from disk");
     }
