@@ -226,6 +226,7 @@ dependencies = [
  "cortex-core",
  "cortex-harness",
  "cortex-runtime",
+ "cortex-tui",
  "serde_json",
  "tracing",
 ]

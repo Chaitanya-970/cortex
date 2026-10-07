@@ -16,6 +16,7 @@ path = "src/main.rs"
 cortex-core = { workspace = true }
 cortex-runtime = { workspace = true }
 cortex-harness = { workspace = true }
+cortex-tui = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }

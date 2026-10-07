@@ -48,6 +48,13 @@ enum Commands {
         #[command(subcommand)]
         action: BenchCommands,
     },
+
+    /// Launch the interactive terminal control plane.
+    Tui {
+        /// Optional path to SQLite database.
+        #[arg(short, long)]
+        db: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -335,6 +342,13 @@ fn main() {
                 }
             }
         },
+        Some(Commands::Tui { db }) => {
+            let db_path = db.unwrap_or_else(default_db_path);
+            if let Err(e) = cortex_tui::run_tui(&db_path) {
+                eprintln!("Error running TUI control plane: {}", e);
+                std::process::exit(1);
+            }
+        }
         None => {
             println!("Cortex Agent Runtime v{}", VERSION);
             println!("Run 'cortex --help' for usage instructions.");
@@ -412,6 +426,25 @@ mod tests {
                         ..
                     },
             }) => assert_eq!(suite, "coding"),
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_tui() {
+        let args = vec!["cortex", "tui", "--db", "/tmp/cortex.db"];
+        let parsed = Cli::try_parse_from(args).unwrap();
+        match parsed.command {
+            Some(Commands::Tui { db: Some(db) }) => {
+                assert_eq!(db, PathBuf::from("/tmp/cortex.db"));
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+
+        let args_no_db = vec!["cortex", "tui"];
+        let parsed_no_db = Cli::try_parse_from(args_no_db).unwrap();
+        match parsed_no_db.command {
+            Some(Commands::Tui { db: None }) => {}
             _ => panic!("unexpected command parsed"),
         }
     }
