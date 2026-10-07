@@ -1,11 +1,13 @@
 name: Evaluation
 
 on:
+  schedule:
+    - cron: "0 3 * * *"
   workflow_dispatch:
   pull_request:
     paths:
       - "crates/**"
-      - "evals/**"
+      - "benchmarks/**"
 
 jobs:
   deterministic-evals:
@@ -13,8 +15,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run deterministic evaluations
-        run: |
-          if [ -d evals ]; then
-            echo "Run Cortex evaluation suite here."
-          fi
+      - uses: Swatinem/rust-cache@v2
+      - name: Run coding benchmark suite
+        run: cargo run -p cortex-cli -- bench run --suite coding --report eval-coding.md
+      - name: Run refactor benchmark suite
+        run: cargo run -p cortex-cli -- bench run --suite refactor --report eval-refactor.md
+      - name: Run CLI benchmark suite
+        run: cargo run -p cortex-cli -- bench run --suite cli --report eval-cli.md
+      - name: Upload evaluation reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: benchmark-evaluation-reports
+          path: eval-*.md
