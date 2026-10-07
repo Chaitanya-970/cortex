@@ -1,0 +1,13 @@
+[package]
+name = "cortex-core"
+description = "Core types and foundational abstractions for the Cortex agent runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+tracing = { workspace = true }

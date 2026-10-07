@@ -1,0 +1,45 @@
+# Changelog
+
+All notable changes to Cortex will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [Unreleased]
+
+### Repository & Workspace Bootstrap
+
+#### Added
+- Cargo workspace with `resolver = "2"` containing:
+  - `cortex-core`: Shared types, domain identifiers (`AgentId`, `RunId`, `SessionId`), and error definitions (`CortexError`).
+  - `cortex-runtime`: Core trait contracts (`ModelProvider`, `Tool`, `Sandbox`).
+  - `cortex-cli`: Command-line executable (`cortex`) with status and environment check subcommands.
+- Standard Apache-2.0 `LICENSE`.
+- Repository governance files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, and `.github/CODEOWNERS`.
+- Strict GitHub Actions CI workflows:
+  - Format checking (`cargo fmt --check`)
+  - Compilation check (`cargo check --workspace --all-targets --all-features`)
+  - Strict clippy lints (`cargo clippy --workspace --all-targets --all-features -- -D warnings`)
+  - Workspace test execution (`cargo test --workspace --all-targets --all-features`)
+  - Documentation generation (`cargo doc --workspace --no-deps --all-features`)
+  - Release artifact compilation (`cargo build --workspace --all-targets --all-features`)
+- Dependency & security policies: `deny.toml` (for `cargo-deny`) and `cargo-audit` security workflows.
+- Contributor tooling: `.editorconfig`, `.gitignore`, `rust-toolchain.toml` (stable toolchain pinned).
+- GitHub templates: issue templates (bug, feature, task) and pull request template.
+- Comprehensive architecture specifications in `docs/architecture/` and initial issue breakdown in `docs/development/initial-issues.md`.
+
+### Planned (Future Milestones)
+- **v0.1**: Core runtime loop, initial model provider (Gemma), tool registry, and basic filesystem/shell tools.
+- **v0.2**: Coding agent workspace boundaries, Git integration, and coding integration tests.
+- **v0.3**: Structured event tracing, SQLite persistence, and run replay.
+- **v0.4**: Multi-agent orchestration, agent manager, and inter-agent message bus.
+- **v0.5**: Persistent scheduler and cron automation.
+- **v0.6**: Docker sandbox and capability-based permissions.
+- **v0.7**: Model Context Protocol (MCP) and Agent Skills integration.
+- **v0.8**: Evaluation harness and deterministic coding benchmarks.
+- **v0.9**: Terminal UI (TUI) and developer tooling.
+- **v1.0**: Stable API guarantees and production-ready cross-platform releases.
+
+> *Note: In accordance with project standards, features are not marked as released until they are implemented and verified.*

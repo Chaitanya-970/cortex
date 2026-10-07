@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cortex-core",
+    "crates/cortex-runtime",
+    "crates/cortex-cli",
+]
+default-members = ["crates/cortex-cli"]
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0"
+authors = ["Cortex Contributors"]
+repository = "https://github.com/cortex-ai/cortex"
+homepage = "https://github.com/cortex-ai/cortex"
+readme = "README.md"
+keywords = ["agent", "runtime", "llm", "autonomous", "harness"]
+categories = ["command-line-utilities", "development-tools"]
+
+[workspace.dependencies]
+cortex-core = { path = "crates/cortex-core", version = "0.1.0-alpha.1" }
+cortex-runtime = { path = "crates/cortex-runtime", version = "0.1.0-alpha.1" }
+thiserror = "1.0"
+tracing = "0.1"
+clap = { version = "4.5", features = ["derive"] }

@@ -1,0 +1,26 @@
+name: Task / Chore
+description: Propose an engineering task, refactor, or infrastructure update
+title: "[Task]: "
+labels: ["type: task"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the task or maintenance work to be completed.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why is this work needed?
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance Criteria
+      description: What conditions must be satisfied for this task to be considered complete?
+    validations:
+      required: true

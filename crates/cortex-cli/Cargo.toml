@@ -1,0 +1,19 @@
+[package]
+name = "cortex-cli"
+description = "Command-line interface and entrypoint for the Cortex agent runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "cortex"
+path = "src/main.rs"
+
+[dependencies]
+cortex-core = { workspace = true }
+cortex-runtime = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
