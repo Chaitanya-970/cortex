@@ -12,6 +12,7 @@
 pub mod agent;
 pub mod model;
 pub mod sandbox;
+pub mod storage;
 pub mod tool;
 pub mod tools;
 pub mod workspace;
@@ -21,6 +22,7 @@ pub use agent::{
 };
 pub use model::{MockModelProvider, ModelDescriptor, ModelOutput, ModelProvider, ToolCall};
 pub use sandbox::{Sandbox, SandboxMode};
+pub use storage::{RunStore, RunSummary};
 pub use tool::{validate_schema, Tool, ToolDefinition, ToolRegistry, ToolResult};
 pub use workspace::Workspace;
 
