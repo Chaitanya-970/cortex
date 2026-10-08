@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use crate::app::{ActiveTab, App, ChatRole, PortalField, PortalInputMode};
+use crate::theme;
 use cortex_core::ExecutionEvent;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -931,218 +932,457 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Top Harness Status Bar
-            Constraint::Min(8),    // Conversation Stream
-            Constraint::Length(3), // Input Bar
+            Constraint::Length(3), // Clean Header with Terracotta brand accent
+            Constraint::Min(8),    // Conversation & Execution Stream
+            Constraint::Length(3), // Signature Dashed ASCII Input Box
+            Constraint::Length(1), // Persistent Status Bar
         ])
         .split(area);
 
-    // 1. Top banner: Modern harness status bar
+    // 1. Top banner: Warm, content-forward Claude Code / Codex CLI header
     let status_style = if app.chat_is_running {
         Style::default()
-            .fg(Color::Yellow)
+            .fg(theme::thinking_shimmer_color(app.anim_tick))
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
-            .fg(Color::Green)
+            .fg(theme::COLOR_SUCCESS)
             .add_modifier(Modifier::BOLD)
     };
     let status_str = if app.chat_is_running {
-        "⠋ RUNNING (Esc to abort)"
+        format!(
+            "{} {}",
+            theme::spinner_frame(app.anim_tick),
+            app.current_verb
+        )
     } else {
-        "● READY"
+        "● Ready".to_string()
     };
 
     let thinking_str = if app.thinking_expanded {
-        "Thinking: Expanded"
+        "Thinking: Expanded (Ctrl+T)"
     } else {
         "Thinking: Collapsed (Ctrl+T)"
     };
     let thinking_style = if app.thinking_expanded {
         Style::default()
-            .fg(Color::Yellow)
+            .fg(theme::COLOR_PRIMARY)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme::COLOR_MUTED)
     };
+
+    let cwd = std::env::current_dir()
+        .map(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| p.display().to_string())
+        })
+        .unwrap_or_else(|_| "cortex".to_string());
 
     let banner_text = Line::from(vec![
         Span::styled(
-            "◈ CORTEX HARNESS ",
+            " ◈ Cortex Code ",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme::COLOR_PRIMARY)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("│ "),
-        Span::styled("Model: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(&active_portal.model_name, Style::default().fg(Color::White)),
+        Span::styled(
+            format!("v{} ", cortex_core::VERSION),
+            Style::default().fg(theme::COLOR_MUTED),
+        ),
+        Span::styled("· ", Style::default().fg(theme::COLOR_SUBTLE)),
+        Span::styled(
+            &active_portal.model_name,
+            Style::default()
+                .fg(theme::COLOR_FG)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(
             format!(" ({})", active_portal.provider_kind),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme::COLOR_MUTED),
         ),
-        Span::raw(" │ "),
+        Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
+        Span::styled(cwd, Style::default().fg(theme::COLOR_MUTED)),
+        Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
         Span::styled(status_str, status_style),
-        Span::raw(" │ "),
+        Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
         Span::styled(thinking_str, thinking_style),
-        Span::raw(" │ "),
-        Span::styled(
-            "Type /help for slash commands",
-            Style::default().fg(Color::DarkGray),
-        ),
     ]);
     let banner = Paragraph::new(banner_text).block(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Cyan)),
+            .border_style(Style::default().fg(theme::COLOR_SUBTLE)),
     );
     frame.render_widget(banner, chunks[0]);
 
-    // 2. Chat messages log
+    // 2. Chat messages & tool executions log
     let mut text_lines: Vec<Line> = Vec::new();
     if app.chat_messages.is_empty() {
         text_lines.push(Line::from(""));
+        text_lines.push(Line::from(vec![
+            Span::styled(
+                "  ◈ Cortex Code",
+                Style::default()
+                    .fg(theme::COLOR_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " — Autonomous AI Worker Runtime",
+                Style::default().fg(theme::COLOR_MUTED),
+            ),
+        ]));
+        text_lines.push(Line::from(""));
+
+        // Live Dashboard Summary Card per DESIGN.md
+        let store_status = if app.store.is_some() {
+            "Connected (SQLite)"
+        } else {
+            "In-Memory / None"
+        };
+        let active_count = app.agents.iter().filter(|a| a.status == "Running").count();
         text_lines.push(Line::from(Span::styled(
-            "  ┌── ◈ Cortex Agent Runtime Harness ──────────────────────────────────────┐",
-            Style::default().fg(Color::Cyan),
+            "  ┌── 📊 Runtime Dashboard ───────────────────────────────────────────────────┐",
+            Style::default().fg(theme::COLOR_PRIMARY),
         )));
+        text_lines.push(Line::from(vec![
+            Span::styled(
+                "  │  Active Portal: ",
+                Style::default().fg(theme::COLOR_MUTED),
+            ),
+            Span::styled(
+                format!("{:<18}", active_portal.name),
+                Style::default()
+                    .fg(theme::COLOR_FG)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Model: ", Style::default().fg(theme::COLOR_MUTED)),
+            Span::styled(
+                format!("{:<26}", active_portal.model_name),
+                Style::default().fg(theme::COLOR_FG),
+            ),
+            Span::styled("│", Style::default().fg(theme::COLOR_PRIMARY)),
+        ]));
+        text_lines.push(Line::from(vec![
+            Span::styled(
+                "  │  Active Agents: ",
+                Style::default().fg(theme::COLOR_MUTED),
+            ),
+            Span::styled(
+                format!(
+                    "{:<18}",
+                    format!("{} running / {}", active_count, app.agents.len())
+                ),
+                Style::default().fg(theme::COLOR_FG),
+            ),
+            Span::styled(" Store: ", Style::default().fg(theme::COLOR_MUTED)),
+            Span::styled(
+                format!("{:<26}", store_status),
+                Style::default().fg(theme::COLOR_FG),
+            ),
+            Span::styled("│", Style::default().fg(theme::COLOR_PRIMARY)),
+        ]));
+        text_lines.push(Line::from(vec![
+            Span::styled(
+                "  │  Session Runs : ",
+                Style::default().fg(theme::COLOR_MUTED),
+            ),
+            Span::styled(
+                format!("{:<18}", app.runs.len()),
+                Style::default().fg(theme::COLOR_FG),
+            ),
+            Span::styled(" Tools: ", Style::default().fg(theme::COLOR_MUTED)),
+            Span::styled(
+                format!("{:<26}", "[read, write, shell, git]"),
+                Style::default().fg(theme::COLOR_FG),
+            ),
+            Span::styled("│", Style::default().fg(theme::COLOR_PRIMARY)),
+        ]));
         text_lines.push(Line::from(Span::styled(
-            "  │ Autonomous terminal coding harness & persistent multi-agent runtime.   │",
-            Style::default().fg(Color::Cyan),
+            "  └───────────────────────────────────────────────────────────────────────────┘",
+            Style::default().fg(theme::COLOR_PRIMARY),
         )));
-        text_lines.push(Line::from(Span::styled(
-            "  │                                                                        │",
-            Style::default().fg(Color::DarkGray),
-        )));
-        text_lines.push(Line::from(Span::styled(
-            "  │ Quick Start:                                                           │",
+        text_lines.push(Line::from(""));
+
+        text_lines.push(Line::from(vec![Span::styled(
+            "  Quick Start:",
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme::COLOR_PRIMARY)
                 .add_modifier(Modifier::BOLD),
-        )));
-        text_lines.push(Line::from(Span::styled(
-            "  │  • Type a coding prompt below and press Enter to dispatch an agent.    │",
-            Style::default().fg(Color::White),
-        )));
-        text_lines.push(Line::from(Span::styled(
-            "  │  • Type '/help' to discover slash commands (/model, /portal, /agents). │",
-            Style::default().fg(Color::White),
-        )));
-        text_lines.push(Line::from(Span::styled(
-            "  │  • Type '/agents' to visualize persistent worker topologies.           │",
-            Style::default().fg(Color::White),
-        )));
-        text_lines.push(Line::from(Span::styled(
-            "  │  • Press Ctrl+T or type '/thinking' to toggle reasoning traces.        │",
-            Style::default().fg(Color::White),
-        )));
-        text_lines.push(Line::from(Span::styled(
-            "  │                                                                        │",
-            Style::default().fg(Color::DarkGray),
-        )));
-        text_lines.push(Line::from(Span::styled(
-            "  │ Examples:                                                              │",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )));
-        text_lines.push(Line::from(Span::styled(
-            "  │   > Inspect repository files and run cargo test                        │",
-            Style::default().fg(Color::Cyan),
-        )));
-        text_lines.push(Line::from(Span::styled(
-            "  │   > /model set claude-3-5-sonnet-20241022                              │",
-            Style::default().fg(Color::Cyan),
-        )));
-        text_lines.push(Line::from(Span::styled(
-            "  │   > /diff                                                              │",
-            Style::default().fg(Color::Cyan),
-        )));
-        text_lines.push(Line::from(Span::styled(
-            "  └────────────────────────────────────────────────────────────────────────┘",
-            Style::default().fg(Color::Cyan),
-        )));
+        )]));
+        text_lines.push(Line::from(vec![Span::styled(
+            "   • Type your coding task below and press Enter to dispatch an autonomous agent.",
+            Style::default().fg(theme::COLOR_FG),
+        )]));
+        text_lines.push(Line::from(vec![Span::styled(
+            "   • Slash commands: /dashboard, /status, /agents, /model, /tools, /diff, /doctor, /help",
+            Style::default().fg(theme::COLOR_FG),
+        )]));
+        text_lines.push(Line::from(vec![Span::styled(
+            "   • Press Ctrl+T or type '/thinking' to toggle reasoning trace details.",
+            Style::default().fg(theme::COLOR_FG),
+        )]));
+        text_lines.push(Line::from(""));
+        text_lines.push(Line::from(vec![Span::styled(
+            "  Design System (DESIGN.md):",
+            Style::default().fg(theme::COLOR_MUTED),
+        )]));
+        text_lines.push(Line::from(vec![
+            Span::styled(
+                "   Terracotta brand accent ",
+                Style::default().fg(theme::COLOR_PRIMARY),
+            ),
+            Span::styled(
+                "· Dashed ASCII input ",
+                Style::default().fg(theme::COLOR_MUTED),
+            ),
+            Span::styled(
+                "· Hot pink tools ",
+                Style::default().fg(theme::COLOR_SECONDARY),
+            ),
+            Span::styled(
+                "· Lavender permissions ",
+                Style::default().fg(theme::COLOR_LAVENDER),
+            ),
+            Span::styled(
+                "· Whimsical thinking verbs",
+                Style::default().fg(theme::COLOR_PRIMARY),
+            ),
+        ]));
         text_lines.push(Line::from(""));
     } else {
         for msg in &app.chat_messages {
             match msg.role {
                 ChatRole::User => {
+                    let border_col = theme::input_shimmer_color(app.anim_tick);
+                    text_lines.push(Line::from(vec![Span::styled(
+                        "  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -",
+                        Style::default().fg(border_col),
+                    )]));
                     text_lines.push(Line::from(vec![
+                        Span::styled("  | ", Style::default().fg(border_col)),
                         Span::styled(
-                            format!("❯ You [{}]: ", msg.timestamp),
+                            "> ",
                             Style::default()
-                                .fg(Color::Cyan)
+                                .fg(theme::COLOR_PRIMARY)
+                                .bg(theme::COLOR_SURFACE)
                                 .add_modifier(Modifier::BOLD),
                         ),
                         Span::styled(
                             &msg.content,
                             Style::default()
-                                .fg(Color::White)
-                                .add_modifier(Modifier::BOLD),
+                                .fg(theme::COLOR_FG)
+                                .bg(theme::COLOR_SURFACE),
                         ),
                     ]));
+                    text_lines.push(Line::from(vec![Span::styled(
+                        "  - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -",
+                        Style::default().fg(border_col),
+                    )]));
                     text_lines.push(Line::from(""));
                 }
                 ChatRole::Thinking => {
                     if msg.is_expanded {
+                        let spinner = theme::spinner_frame(app.anim_tick);
+                        let verb = &app.current_verb;
                         text_lines.push(Line::from(Span::styled(
-                            "  ┌─ ▼ Thinking Process (expanded · press Ctrl+T or /thinking to collapse) ─────",
-                            Style::default().fg(Color::Yellow),
+                            format!(
+                                "  ┌─ ▼ Thinking: {} {} (Ctrl+T to collapse) ──────────────────────",
+                                spinner, verb
+                            ),
+                            Style::default().fg(theme::COLOR_PRIMARY),
                         )));
                         for line in msg.content.lines() {
                             text_lines.push(Line::from(vec![
-                                Span::styled("  │ ", Style::default().fg(Color::Yellow)),
-                                Span::styled(line, Style::default().fg(Color::DarkGray)),
+                                Span::styled("  │ ", Style::default().fg(theme::COLOR_PRIMARY)),
+                                Span::styled(line, Style::default().fg(theme::COLOR_MUTED)),
                             ]));
                         }
                         text_lines.push(Line::from(Span::styled(
                             "  └─────────────────────────────────────────────────────────────────────────────",
-                            Style::default().fg(Color::Yellow),
+                            Style::default().fg(theme::COLOR_PRIMARY),
                         )));
                     } else {
                         let lines_count = msg.content.lines().count();
-                        text_lines.push(Line::from(Span::styled(
-                            format!(
-                                "  ▶ Thinking Process (collapsed · {} lines) [Press Ctrl+T or /thinking to expand]",
-                                lines_count
+                        let spinner = theme::spinner_frame(app.anim_tick);
+                        let verb = &app.current_verb;
+                        text_lines.push(Line::from(vec![
+                            Span::styled(
+                                format!("  {} ", spinner),
+                                Style::default().fg(theme::thinking_shimmer_color(app.anim_tick)),
                             ),
-                            Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
-                        )));
+                            Span::styled(
+                                format!("{} ({} lines) ", verb, lines_count),
+                                Style::default()
+                                    .fg(theme::COLOR_PRIMARY)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                "[Press Ctrl+T to expand]",
+                                Style::default().fg(theme::COLOR_MUTED),
+                            ),
+                        ]));
                     }
                     text_lines.push(Line::from(""));
                 }
                 ChatRole::Assistant => {
                     text_lines.push(Line::from(vec![Span::styled(
-                        format!("◆ Cortex [{}]:", msg.timestamp),
+                        format!("  ◆ Cortex [{}]:", msg.timestamp),
                         Style::default()
-                            .fg(Color::Green)
+                            .fg(theme::COLOR_PRIMARY)
                             .add_modifier(Modifier::BOLD),
                     )]));
                     for line in msg.content.lines() {
                         text_lines.push(Line::from(vec![
-                            Span::raw("  "),
-                            Span::styled(line, Style::default().fg(Color::White)),
+                            Span::raw("    "),
+                            Span::styled(line, Style::default().fg(theme::COLOR_FG)),
                         ]));
                     }
                     text_lines.push(Line::from(""));
                 }
                 ChatRole::Tool => {
-                    text_lines.push(Line::from(vec![
-                        Span::styled("  ⚙ ", Style::default().fg(Color::Yellow)),
-                        Span::styled(&msg.content, Style::default().fg(Color::Yellow)),
-                    ]));
+                    let is_diff = msg.content.contains("--- a/")
+                        || msg.content.contains("diff --git")
+                        || msg
+                            .content
+                            .lines()
+                            .any(|l| l.starts_with('+') || l.starts_with('-'));
+                    let tool_title = if is_diff {
+                        "Edit / Diff"
+                    } else if msg.content.to_lowercase().contains("shell")
+                        || msg.content.to_lowercase().contains("cargo")
+                        || msg.content.to_lowercase().contains("npm")
+                    {
+                        "Bash"
+                    } else {
+                        "Tool Output"
+                    };
+                    text_lines.push(Line::from(Span::styled(
+                        format!(
+                            "  ┌─ {} ────────────────────────────────────────────────────────",
+                            tool_title
+                        ),
+                        Style::default().fg(theme::COLOR_SECONDARY),
+                    )));
+                    for line in msg.content.lines() {
+                        let (prefix_span, line_span) = if line.starts_with('+')
+                            && !line.starts_with("+++")
+                        {
+                            (
+                                Span::styled("  │  ", Style::default().fg(theme::COLOR_SECONDARY)),
+                                Span::styled(
+                                    line,
+                                    Style::default()
+                                        .fg(theme::COLOR_SUCCESS)
+                                        .bg(theme::COLOR_DIFF_ADDED_BG),
+                                ),
+                            )
+                        } else if line.starts_with('-') && !line.starts_with("---") {
+                            (
+                                Span::styled("  │  ", Style::default().fg(theme::COLOR_SECONDARY)),
+                                Span::styled(
+                                    line,
+                                    Style::default()
+                                        .fg(theme::COLOR_ERROR)
+                                        .bg(theme::COLOR_DIFF_REMOVED_BG),
+                                ),
+                            )
+                        } else {
+                            (
+                                Span::styled("  │  ", Style::default().fg(theme::COLOR_SECONDARY)),
+                                Span::styled(
+                                    line,
+                                    Style::default()
+                                        .fg(theme::COLOR_FG)
+                                        .bg(theme::COLOR_TOOL_BG),
+                                ),
+                            )
+                        };
+                        text_lines.push(Line::from(vec![prefix_span, line_span]));
+                    }
+                    text_lines.push(Line::from(Span::styled(
+                        "  └─────────────────────────────────────────────────────────────────────────────",
+                        Style::default().fg(theme::COLOR_SECONDARY),
+                    )));
+                    text_lines.push(Line::from(""));
                 }
                 ChatRole::System => {
-                    for (i, line) in msg.content.lines().enumerate() {
-                        if i == 0 {
+                    let is_perm = msg.content.to_lowercase().contains("allow")
+                        || msg.content.to_lowercase().contains("permission");
+                    let border_color = if is_perm {
+                        theme::COLOR_LAVENDER
+                    } else {
+                        theme::COLOR_PRIMARY
+                    };
+
+                    for line in msg.content.lines() {
+                        let trimmed = line.trim_start();
+                        if trimmed.starts_with('┌')
+                            || trimmed.starts_with('├')
+                            || trimmed.starts_with('└')
+                        {
+                            text_lines.push(Line::from(Span::styled(
+                                format!("  {}", trimmed),
+                                Style::default().fg(border_color),
+                            )));
+                        } else if let Some(stripped) = trimmed.strip_prefix('│') {
                             text_lines.push(Line::from(vec![
-                                Span::styled("  ℹ ", Style::default().fg(Color::Cyan)),
-                                Span::styled(line, Style::default().fg(Color::Gray)),
+                                Span::styled("  │", Style::default().fg(border_color)),
+                                Span::styled(stripped, Style::default().fg(theme::COLOR_FG)),
+                            ]));
+                        } else if trimmed.starts_with('✓') {
+                            text_lines.push(Line::from(vec![
+                                Span::styled(
+                                    "  ✓ ",
+                                    Style::default()
+                                        .fg(theme::COLOR_SUCCESS)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    trimmed.trim_start_matches('✓').trim_start(),
+                                    Style::default().fg(theme::COLOR_FG),
+                                ),
+                            ]));
+                        } else if trimmed.starts_with('⚠') {
+                            text_lines.push(Line::from(vec![
+                                Span::styled(
+                                    "  ⚠ ",
+                                    Style::default()
+                                        .fg(theme::COLOR_WARNING)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    trimmed.trim_start_matches('⚠').trim_start(),
+                                    Style::default().fg(theme::COLOR_WARNING),
+                                ),
+                            ]));
+                        } else if trimmed.starts_with('✗') || trimmed.starts_with("Failed") {
+                            text_lines.push(Line::from(vec![
+                                Span::styled(
+                                    "  ✗ ",
+                                    Style::default()
+                                        .fg(theme::COLOR_ERROR)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    trimmed.trim_start_matches('✗').trim_start(),
+                                    Style::default().fg(theme::COLOR_ERROR),
+                                ),
+                            ]));
+                        } else if trimmed.starts_with("Commands:")
+                            || trimmed.starts_with("Use '/")
+                            || trimmed.starts_with("See '/")
+                            || trimmed.starts_with("Run benchmark")
+                        {
+                            text_lines.push(Line::from(vec![
+                                Span::raw("  "),
+                                Span::styled(line, Style::default().fg(theme::COLOR_MUTED)),
                             ]));
                         } else {
                             text_lines.push(Line::from(vec![
-                                Span::raw("    "),
-                                Span::styled(line, Style::default().fg(Color::Gray)),
+                                Span::styled("  ℹ ", Style::default().fg(theme::COLOR_LAVENDER)),
+                                Span::styled(line, Style::default().fg(theme::COLOR_MUTED)),
                             ]));
                         }
                     }
@@ -1151,10 +1391,12 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 ChatRole::Error => {
                     text_lines.push(Line::from(vec![
                         Span::styled(
-                            "  ✖ ",
-                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                            "  ✗ ",
+                            Style::default()
+                                .fg(theme::COLOR_ERROR)
+                                .add_modifier(Modifier::BOLD),
                         ),
-                        Span::styled(&msg.content, Style::default().fg(Color::Red)),
+                        Span::styled(&msg.content, Style::default().fg(theme::COLOR_ERROR)),
                     ]));
                     text_lines.push(Line::from(""));
                 }
@@ -1163,18 +1405,28 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     if app.chat_is_running {
-        text_lines.push(Line::from(vec![Span::styled(
-            "  ⠋ Cortex is executing & thinking... (Press Esc to cancel)",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )]));
+        let spinner = theme::spinner_frame(app.anim_tick);
+        let verb = &app.current_verb;
+        text_lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {} ", spinner),
+                Style::default()
+                    .fg(theme::thinking_shimmer_color(app.anim_tick))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{} (Press Esc to cancel)", verb),
+                Style::default()
+                    .fg(theme::COLOR_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
         text_lines.push(Line::from(""));
     }
 
     // Dynamic Autoscroll calculation
     let total_lines = text_lines.len();
-    let visible_height = chunks[1].height.saturating_sub(2) as usize; // Border box margin
+    let visible_height = chunks[1].height.saturating_sub(2) as usize;
     let scroll_y = if app.chat_auto_scroll {
         total_lines.saturating_sub(visible_height)
     } else {
@@ -1187,10 +1439,11 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(theme::COLOR_SUBTLE))
                 .title(" Conversation & Execution Stream ")
                 .title_style(
                     Style::default()
-                        .fg(Color::White)
+                        .fg(theme::COLOR_FG)
                         .add_modifier(Modifier::BOLD),
                 ),
         )
@@ -1198,70 +1451,93 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         .wrap(Wrap { trim: false });
     frame.render_widget(chat_panel, chunks[1]);
 
-    // 3. Input bar with cursor rendering
+    // 3. Signature Dashed ASCII Input Box (DESIGN.md)
     let input_title = if app.chat_input.starts_with('/') {
-        " Slash Command (Press Enter to execute) "
+        " Slash Command (Tab: Complete · Enter: Execute) "
     } else if app.chat_is_running {
-        " Agent Executing... (Press Esc to cancel) "
+        " Agent Executing (Esc to cancel) "
     } else {
-        " Task Prompt / Slash Command (Type /help for catalog | Ctrl+T: Thinking) "
+        " Input (- - - dashed ASCII · /help for catalog · Ctrl+T: Thinking) "
     };
 
     let input_border_color = if app.chat_input.starts_with('/') {
-        Color::Magenta
+        theme::COLOR_SECONDARY
     } else if app.chat_is_running {
-        Color::Yellow
+        theme::thinking_shimmer_color(app.anim_tick)
     } else {
-        Color::Cyan
+        theme::input_shimmer_color(app.anim_tick)
     };
 
-    // Safe cursor slicing
     let cursor_pos = app.chat_cursor.min(app.chat_input.len());
     let before_cursor = &app.chat_input[..cursor_pos];
     let after_cursor = &app.chat_input[cursor_pos..];
 
     let input_line = Line::from(vec![
         Span::styled(
-            "> ",
+            " > ",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme::COLOR_PRIMARY)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(before_cursor, Style::default().fg(Color::White)),
+        Span::styled(before_cursor, Style::default().fg(theme::COLOR_FG)),
         Span::styled(
             "█",
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme::COLOR_PRIMARY)
                 .add_modifier(Modifier::RAPID_BLINK),
         ),
-        Span::styled(after_cursor, Style::default().fg(Color::White)),
+        Span::styled(after_cursor, Style::default().fg(theme::COLOR_FG)),
     ]);
 
     let input_widget = Paragraph::new(input_line).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
+            .border_set(theme::DASHED_INPUT_SET)
             .border_style(Style::default().fg(input_border_color))
             .title(input_title)
             .title_style(
                 Style::default()
                     .fg(input_border_color)
                     .add_modifier(Modifier::BOLD),
-            )
-            .title_bottom(Line::from(vec![
-                Span::styled(" Enter", Style::default().fg(Color::Yellow)),
-                Span::raw(": Send │ "),
-                Span::styled("Tab", Style::default().fg(Color::Yellow)),
-                Span::raw(": Complete │ "),
-                Span::styled("Ctrl+T", Style::default().fg(Color::Yellow)),
-                Span::raw(": Thinking │ "),
-                Span::styled("Esc", Style::default().fg(Color::Yellow)),
-                Span::raw(": Clear │ "),
-                Span::styled("Ctrl+C", Style::default().fg(Color::Yellow)),
-                Span::raw(": Exit "),
-            ])),
+            ),
     );
     frame.render_widget(input_widget, chunks[2]);
+
+    // 4. Persistent Status Bar (Bottom) per DESIGN.md
+    let elapsed_str = if let Some(start) = app.run_start_instant {
+        format!("{:.1}s", start.elapsed().as_secs_f32())
+    } else {
+        "0.0s".to_string()
+    };
+
+    let status_line = Line::from(vec![
+        Span::styled(" ", Style::default()),
+        Span::styled(
+            &active_portal.model_name,
+            Style::default().fg(theme::COLOR_MUTED),
+        ),
+        Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
+        Span::styled(
+            format!("{} tokens", app.session_tokens),
+            Style::default().fg(theme::COLOR_MUTED),
+        ),
+        Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
+        Span::styled(
+            format!("${:.4}", app.session_cost),
+            Style::default().fg(theme::COLOR_MUTED),
+        ),
+        Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
+        Span::styled(elapsed_str, Style::default().fg(theme::COLOR_MUTED)),
+        Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
+        Span::styled("normal", Style::default().fg(theme::COLOR_MUTED)),
+        Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
+        Span::styled(
+            "/help for commands",
+            Style::default().fg(theme::COLOR_MUTED),
+        ),
+    ]);
+    let status_bar = Paragraph::new(status_line);
+    frame.render_widget(status_bar, chunks[3]);
 }
 
 fn render_portals(frame: &mut Frame, app: &App, area: Rect) {

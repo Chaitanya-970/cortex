@@ -95,7 +95,8 @@ enum Commands {
         action: BenchCommands,
     },
 
-    /// Launch the interactive terminal control plane.
+    /// Launch the interactive terminal control plane (Claude Code / Codex CLI harness).
+    #[command(alias = "dashboard", alias = "chat")]
     Tui {
         /// Optional path to SQLite database.
         #[arg(short, long)]
@@ -1045,5 +1046,16 @@ mod tests {
             }
             _ => panic!("unexpected command parsed"),
         }
+    }
+
+    #[test]
+    fn test_cli_parsing_tui_and_dashboard() {
+        let args_tui = vec!["cortex", "tui"];
+        let parsed_tui = Cli::try_parse_from(args_tui).unwrap();
+        assert!(matches!(parsed_tui.command, Some(Commands::Tui { .. })));
+
+        let args_dash = vec!["cortex", "dashboard"];
+        let parsed_dash = Cli::try_parse_from(args_dash).unwrap();
+        assert!(matches!(parsed_dash.command, Some(Commands::Tui { .. })));
     }
 }

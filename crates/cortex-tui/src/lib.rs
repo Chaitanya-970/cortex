@@ -8,6 +8,7 @@ pub mod app;
 pub mod commands;
 pub mod event;
 pub mod terminal;
+pub mod theme;
 pub mod ui;
 
 use app::App;

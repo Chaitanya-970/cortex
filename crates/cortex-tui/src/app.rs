@@ -370,6 +370,16 @@ pub struct App {
     pub chat_handle: Option<AgentExecutionHandle>,
     /// Highest event sequence number already rendered in chat stream.
     pub chat_last_event_seq: u64,
+    /// Animation tick counter for shimmer and spinner frames.
+    pub anim_tick: usize,
+    /// Instant when current agent execution started.
+    pub run_start_instant: Option<std::time::Instant>,
+    /// Accumulated tokens consumed in the current session.
+    pub session_tokens: u64,
+    /// Accumulated estimated cost in USD for the current session.
+    pub session_cost: f64,
+    /// Current whimsical verb displayed during thinking/loading.
+    pub current_verb: String,
 
     // Portals configuration state
     /// List of configured model portals.
@@ -456,6 +466,11 @@ impl App {
             chat_is_running: false,
             chat_handle: None,
             chat_last_event_seq: 0,
+            anim_tick: 0,
+            run_start_instant: None,
+            session_tokens: 0,
+            session_cost: 0.0,
+            current_verb: "Percolating...".to_string(),
 
             portals: Self::default_portals(),
             selected_portal_idx: 0,
@@ -887,6 +902,8 @@ impl App {
 
         self.chat_is_running = true;
         self.chat_last_event_seq = 0;
+        self.run_start_instant = Some(std::time::Instant::now());
+        self.current_verb = crate::theme::whimsical_verb(self.anim_tick).to_string();
         self.chat_handle = Some(AgentExecutionHandle {
             cancel_token: cancel_token.clone(),
             receiver,
@@ -929,6 +946,7 @@ impl App {
 
     /// Poll for real-time updates from background agent executions and event store.
     pub fn poll_chat_updates(&mut self) {
+        self.anim_tick = self.anim_tick.wrapping_add(1);
         let mut finished = false;
         let mut new_run_id: Option<String> = None;
 
@@ -950,6 +968,9 @@ impl App {
                         });
                     }
                     ChatAgentUpdate::Completed(res) => {
+                        self.session_tokens += res.tokens_total as u64;
+                        self.session_cost += res.estimated_cost_usd;
+                        self.run_start_instant = None;
                         let answer = &res.final_answer;
                         if let (Some(start), Some(end)) =
                             (answer.find("<think>"), answer.find("</think>"))
@@ -994,6 +1015,7 @@ impl App {
                         finished = true;
                     }
                     ChatAgentUpdate::Cancelled(reason) => {
+                        self.run_start_instant = None;
                         self.chat_messages.push(ChatMessageItem {
                             role: ChatRole::System,
                             content: format!("Agent run cancelled: {}", reason),
@@ -1003,6 +1025,7 @@ impl App {
                         finished = true;
                     }
                     ChatAgentUpdate::Error(err) => {
+                        self.run_start_instant = None;
                         self.chat_messages.push(ChatMessageItem {
                             role: ChatRole::Error,
                             content: format!("Agent execution error: {}", err),
