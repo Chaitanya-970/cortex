@@ -36,6 +36,17 @@ cargo install --path crates/cortex-cli
 cargo install --git https://github.com/x1-xh/cortex.git cortex-cli
 ```
 
+ensure cargo binary directory (`~/.cargo/bin`) is in `$PATH`:
+
+```bash
+# current session
+export PATH="$HOME/.cargo/bin:$PATH"
+
+# persistent configuration (zsh / bash)
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc   # zsh
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc  # bash
+```
+
 verification:
 
 ```bash
