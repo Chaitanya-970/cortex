@@ -33,3 +33,4 @@ lcov.info
 
 # Document files
 *.docx
+!Cortex_OSS_Roadmap.docx
