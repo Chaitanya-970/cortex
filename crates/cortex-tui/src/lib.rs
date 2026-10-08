@@ -5,6 +5,7 @@
 #![deny(missing_docs)]
 
 pub mod app;
+pub mod commands;
 pub mod event;
 pub mod terminal;
 pub mod ui;
@@ -31,7 +32,8 @@ pub fn run_tui(db_path: &Path) -> Result<()> {
         }
     };
 
-    let app = App::new(store);
+    let mut app = App::new(store);
+    app.set_tab(app::ActiveTab::Chat);
     let (mut terminal, _guard) = TerminalGuard::init()?;
     run_app(&mut terminal, app)
 }
@@ -143,16 +145,25 @@ mod tests {
                 role: ChatRole::User,
                 content: "Run test suite".to_string(),
                 timestamp: "12:00:00".to_string(),
+                is_expanded: false,
+            },
+            ChatMessageItem {
+                role: ChatRole::Thinking,
+                content: "Analyzing workspace crates and locating tests".to_string(),
+                timestamp: "12:00:02".to_string(),
+                is_expanded: true,
             },
             ChatMessageItem {
                 role: ChatRole::Tool,
                 content: "Executed shell: cargo test".to_string(),
                 timestamp: "12:00:05".to_string(),
+                is_expanded: false,
             },
             ChatMessageItem {
                 role: ChatRole::Assistant,
                 content: "All tests pass successfully.".to_string(),
                 timestamp: "12:00:10".to_string(),
+                is_expanded: false,
             },
         ];
 

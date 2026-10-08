@@ -65,17 +65,56 @@ impl ActiveTab {
     }
 }
 
+/// Lifecycle execution states for persistent agents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum AgentLifecycleState {
+    /// Agent initialized and waiting for tasks.
+    #[default]
+    Ready,
+    /// Agent currently executing an assigned task.
+    Running,
+    /// Agent paused by user or coordinator.
+    Paused,
+    /// Agent stopped and inactive.
+    Stopped,
+    /// Agent encountered an unrecoverable failure.
+    Failed,
+}
+
+impl AgentLifecycleState {
+    /// Formatted string representation of the state.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Ready => "Ready",
+            Self::Running => "Running",
+            Self::Paused => "Paused",
+            Self::Stopped => "Stopped",
+            Self::Failed => "Failed",
+        }
+    }
+}
+
 /// Information representing an agent configured in the workspace.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentView {
     /// Identifier of the agent.
     pub id: String,
-    /// Agent role or display name.
+    /// Agent display name.
     pub name: String,
+    /// Agent role description.
+    pub role: String,
     /// Assigned operational policy or instruction summary.
     pub policy: String,
-    /// Current execution state.
+    /// Current execution state badge.
     pub status: String,
+    /// Model identifier configured for this agent.
+    pub model: String,
+    /// Working directory boundary path.
+    pub workspace: String,
+    /// Authorized tool names.
+    pub tools: Vec<String>,
+    /// Number of runs executed by this agent.
+    pub runs_count: usize,
 }
 
 /// Configuration for a model inference provider portal.
@@ -209,6 +248,8 @@ pub enum ChatRole {
     System,
     /// Tool invocation or execution observation.
     Tool,
+    /// Internal reasoning trace or thinking tokens.
+    Thinking,
     /// Error message.
     Error,
 }
@@ -222,6 +263,33 @@ pub struct ChatMessageItem {
     pub content: String,
     /// Timestamp when the message was recorded.
     pub timestamp: String,
+    /// Whether this message (such as a thinking trace) is expanded in the UI.
+    pub is_expanded: bool,
+}
+
+impl ChatMessageItem {
+    /// Create a new message item with default expansion and current timestamp.
+    pub fn new(role: ChatRole, content: impl Into<String>) -> Self {
+        let now = chrono::Utc::now().format("%H:%M:%S").to_string();
+        Self {
+            role,
+            content: content.into(),
+            timestamp: now,
+            is_expanded: false,
+        }
+    }
+
+    /// Set an explicit timestamp on the message item.
+    pub fn with_timestamp(mut self, timestamp: impl Into<String>) -> Self {
+        self.timestamp = timestamp.into();
+        self
+    }
+
+    /// Set whether the item is expanded.
+    pub fn with_expanded(mut self, is_expanded: bool) -> Self {
+        self.is_expanded = is_expanded;
+        self
+    }
 }
 
 /// Updates emitted by background agent execution worker threads.
@@ -284,7 +352,17 @@ pub struct App {
     pub chat_messages: Vec<ChatMessageItem>,
     /// Current prompt text in the input box.
     pub chat_input: String,
-    /// Message stream scroll offset.
+    /// Insertion cursor position within the chat prompt input buffer.
+    pub chat_cursor: usize,
+    /// Prompt and slash command input history.
+    pub chat_history: Vec<String>,
+    /// Active index within the command history during Up/Down browsing.
+    pub chat_history_idx: Option<usize>,
+    /// Flag indicating whether the chat should automatically pin scroll to the newest message.
+    pub chat_auto_scroll: bool,
+    /// Global expansion state for thinking traces.
+    pub thinking_expanded: bool,
+    /// Message stream scroll offset when manual scrolling is active.
     pub chat_scroll: usize,
     /// Whether an agent task is actively executing in background.
     pub chat_is_running: bool,
@@ -309,6 +387,10 @@ pub struct App {
 impl App {
     /// Create a new [`App`] initialized with an optional storage handle.
     pub fn new(store: Option<Arc<RunStore>>) -> Self {
+        let ws = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".to_string());
+
         let mut app = Self {
             active_tab: ActiveTab::Dashboard,
             store,
@@ -322,23 +404,54 @@ impl App {
                 AgentView {
                     id: "coder-01".to_string(),
                     name: "Coding Agent".to_string(),
-                    policy: "Autonomous repository bug fixing and test verification".to_string(),
+                    role: "Autonomous Bug Fixing & Implementation".to_string(),
+                    policy: "Inspect files before modifying, write minimal tests, verify with cargo test".to_string(),
                     status: "Ready".to_string(),
+                    model: "gpt-4o-mini".to_string(),
+                    workspace: ws.clone(),
+                    tools: vec![
+                        "read_file".into(),
+                        "write_file".into(),
+                        "list_dir".into(),
+                        "shell".into(),
+                        "git_*".into(),
+                    ],
+                    runs_count: 0,
                 },
                 AgentView {
                     id: "eval-01".to_string(),
                     name: "Benchmark Evaluator".to_string(),
-                    policy: "Executes reproducible evaluation suites and collects metrics"
-                        .to_string(),
-                    status: "Idle".to_string(),
+                    role: "Deterministic Benchmark & Test Runner".to_string(),
+                    policy: "Executes reproducible evaluation suites and collects ground-truth metrics".to_string(),
+                    status: "Ready".to_string(),
+                    model: "gpt-4o".to_string(),
+                    workspace: "Isolated".to_string(),
+                    tools: vec!["read_file".into(), "shell".into()],
+                    runs_count: 0,
+                },
+                AgentView {
+                    id: "reviewer-01".to_string(),
+                    name: "Policy Reviewer".to_string(),
+                    role: "PR Policy & Security Compliance".to_string(),
+                    policy: "Audits git diffs, detects secret leaks, enforces code conventions".to_string(),
+                    status: "Paused".to_string(),
+                    model: "claude-3-5-sonnet".to_string(),
+                    workspace: "Read-Only".to_string(),
+                    tools: vec!["read_file".into(), "git_diff".into(), "git_log".into()],
+                    runs_count: 0,
                 },
             ],
             selected_agent_idx: 0,
             should_quit: false,
-            status_message: Some("Cortex TUI Control Plane active. Press 'q' to quit.".to_string()),
+            status_message: Some("Cortex Harness active. Type /help for slash commands, 'q' to quit.".to_string()),
 
             chat_messages: Vec::new(),
             chat_input: String::new(),
+            chat_cursor: 0,
+            chat_history: Vec::new(),
+            chat_history_idx: None,
+            chat_auto_scroll: true,
+            thinking_expanded: false,
             chat_scroll: 0,
             chat_is_running: false,
             chat_handle: None,
@@ -593,20 +706,162 @@ impl App {
             .unwrap_or(&self.portals[0])
     }
 
+    /// Insert a character into the chat input buffer at current cursor position.
+    pub fn chat_input_insert(&mut self, c: char) {
+        if self.chat_cursor >= self.chat_input.len() {
+            self.chat_input.push(c);
+            self.chat_cursor = self.chat_input.len();
+        } else {
+            self.chat_input.insert(self.chat_cursor, c);
+            self.chat_cursor += 1;
+        }
+    }
+
+    /// Delete character immediately preceding the cursor in chat input.
+    pub fn chat_input_backspace(&mut self) {
+        if self.chat_cursor > 0 && !self.chat_input.is_empty() {
+            self.chat_cursor -= 1;
+            if self.chat_cursor < self.chat_input.len() {
+                self.chat_input.remove(self.chat_cursor);
+            }
+        }
+    }
+
+    /// Delete character at current cursor position in chat input.
+    pub fn chat_input_delete(&mut self) {
+        if self.chat_cursor < self.chat_input.len() {
+            self.chat_input.remove(self.chat_cursor);
+        }
+    }
+
+    /// Move input cursor one position to the left.
+    pub fn chat_input_left(&mut self) {
+        self.chat_cursor = self.chat_cursor.saturating_sub(1);
+    }
+
+    /// Move input cursor one position to the right.
+    pub fn chat_input_right(&mut self) {
+        if self.chat_cursor < self.chat_input.len() {
+            self.chat_cursor += 1;
+        }
+    }
+
+    /// Move input cursor to beginning of input line.
+    pub fn chat_input_home(&mut self) {
+        self.chat_cursor = 0;
+    }
+
+    /// Move input cursor to end of input line.
+    pub fn chat_input_end(&mut self) {
+        self.chat_cursor = self.chat_input.len();
+    }
+
+    /// Clear chat prompt input line and reset cursor.
+    pub fn chat_input_clear(&mut self) {
+        self.chat_input.clear();
+        self.chat_cursor = 0;
+        self.chat_history_idx = None;
+    }
+
+    /// Recall previous command from history into input.
+    pub fn chat_history_prev(&mut self) {
+        if self.chat_history.is_empty() {
+            return;
+        }
+        let next_idx = match self.chat_history_idx {
+            None => self.chat_history.len() - 1,
+            Some(idx) => idx.saturating_sub(1),
+        };
+        self.chat_history_idx = Some(next_idx);
+        self.chat_input = self.chat_history[next_idx].clone();
+        self.chat_cursor = self.chat_input.len();
+    }
+
+    /// Recall next command from history into input.
+    pub fn chat_history_next(&mut self) {
+        if self.chat_history.is_empty() {
+            return;
+        }
+        if let Some(idx) = self.chat_history_idx {
+            if idx + 1 < self.chat_history.len() {
+                let next_idx = idx + 1;
+                self.chat_history_idx = Some(next_idx);
+                self.chat_input = self.chat_history[next_idx].clone();
+                self.chat_cursor = self.chat_input.len();
+            } else {
+                self.chat_history_idx = None;
+                self.chat_input.clear();
+                self.chat_cursor = 0;
+            }
+        }
+    }
+
+    /// Set thinking trace expansion state globally and update all existing thinking items.
+    pub fn set_thinking_expanded(&mut self, expanded: bool) {
+        self.thinking_expanded = expanded;
+        for msg in &mut self.chat_messages {
+            if msg.role == ChatRole::Thinking {
+                msg.is_expanded = expanded;
+            }
+        }
+    }
+
+    /// Toggle thinking trace expansion.
+    pub fn toggle_thinking_expanded(&mut self) {
+        let new_state = !self.thinking_expanded;
+        self.set_thinking_expanded(new_state);
+    }
+
     /// Scroll chat messages view upwards.
     pub fn chat_scroll_up(&mut self) {
+        self.chat_auto_scroll = false;
         self.chat_scroll = self.chat_scroll.saturating_add(3);
     }
 
     /// Scroll chat messages view downwards.
     pub fn chat_scroll_down(&mut self) {
         self.chat_scroll = self.chat_scroll.saturating_sub(3);
+        if self.chat_scroll == 0 {
+            self.chat_auto_scroll = true;
+        }
     }
 
-    /// Submit current chat input prompt to launch an autonomous agent.
+    /// Submit current chat input prompt or slash command.
     pub fn dispatch_chat(&mut self) {
         let prompt = self.chat_input.trim().to_string();
         if prompt.is_empty() {
+            return;
+        }
+
+        // Record prompt into input history
+        if self.chat_history.last().map(|s| s.as_str()) != Some(&prompt) {
+            self.chat_history.push(prompt.clone());
+        }
+        self.chat_history_idx = None;
+        self.chat_input.clear();
+        self.chat_cursor = 0;
+        self.chat_auto_scroll = true;
+        self.chat_scroll = 0;
+
+        // Route slash commands
+        if prompt.starts_with('/') {
+            let now = chrono::Utc::now().format("%H:%M:%S").to_string();
+            self.chat_messages.push(ChatMessageItem {
+                role: ChatRole::User,
+                content: prompt.clone(),
+                timestamp: now.clone(),
+                is_expanded: false,
+            });
+
+            if let Some(command) = crate::commands::parse_command(&prompt) {
+                let response = crate::commands::execute_command(self, command);
+                self.chat_messages.push(ChatMessageItem {
+                    role: ChatRole::System,
+                    content: response,
+                    timestamp: now,
+                    is_expanded: false,
+                });
+            }
             return;
         }
 
@@ -618,12 +873,12 @@ impl App {
             return;
         }
 
-        self.chat_input.clear();
         let now = chrono::Utc::now().format("%H:%M:%S").to_string();
         self.chat_messages.push(ChatMessageItem {
             role: ChatRole::User,
             content: prompt.clone(),
             timestamp: now,
+            is_expanded: false,
         });
 
         let active_portal = self.active_portal().clone();
@@ -666,6 +921,7 @@ impl App {
                 content: "Cancellation requested... Waiting for agent to abort gracefully."
                     .to_string(),
                 timestamp: now,
+                is_expanded: false,
             });
             self.status_message = Some("Sent cancellation signal to running agent.".to_string());
         }
@@ -690,14 +946,39 @@ impl App {
                                 run_id, model
                             ),
                             timestamp: now,
+                            is_expanded: false,
                         });
                     }
                     ChatAgentUpdate::Completed(res) => {
-                        self.chat_messages.push(ChatMessageItem {
-                            role: ChatRole::Assistant,
-                            content: res.final_answer.clone(),
-                            timestamp: now.clone(),
-                        });
+                        let answer = &res.final_answer;
+                        if let (Some(start), Some(end)) =
+                            (answer.find("<think>"), answer.find("</think>"))
+                        {
+                            let thought = answer[start + 7..end].trim().to_string();
+                            let remaining = answer[end + 8..].trim().to_string();
+                            if !thought.is_empty() {
+                                self.chat_messages.push(ChatMessageItem {
+                                    role: ChatRole::Thinking,
+                                    content: thought,
+                                    timestamp: now.clone(),
+                                    is_expanded: self.thinking_expanded,
+                                });
+                            }
+                            self.chat_messages.push(ChatMessageItem {
+                                role: ChatRole::Assistant,
+                                content: remaining,
+                                timestamp: now.clone(),
+                                is_expanded: false,
+                            });
+                        } else {
+                            self.chat_messages.push(ChatMessageItem {
+                                role: ChatRole::Assistant,
+                                content: res.final_answer.clone(),
+                                timestamp: now.clone(),
+                                is_expanded: false,
+                            });
+                        }
+
                         self.chat_messages.push(ChatMessageItem {
                             role: ChatRole::System,
                             content: format!(
@@ -708,6 +989,7 @@ impl App {
                                 res.estimated_cost_usd
                             ),
                             timestamp: now,
+                            is_expanded: false,
                         });
                         finished = true;
                     }
@@ -716,6 +998,7 @@ impl App {
                             role: ChatRole::System,
                             content: format!("Agent run cancelled: {}", reason),
                             timestamp: now,
+                            is_expanded: false,
                         });
                         finished = true;
                     }
@@ -724,6 +1007,7 @@ impl App {
                             role: ChatRole::Error,
                             content: format!("Agent execution error: {}", err),
                             timestamp: now,
+                            is_expanded: false,
                         });
                         finished = true;
                     }
@@ -759,6 +1043,7 @@ impl App {
                                         role: ChatRole::Tool,
                                         content: format!("Tool call: {} ({})", tool_name, preview),
                                         timestamp: ts,
+                                        is_expanded: false,
                                     });
                                 }
                                 ExecutionEvent::ToolCompleted {
@@ -776,6 +1061,7 @@ impl App {
                                             tool_name, preview
                                         ),
                                         timestamp: ts,
+                                        is_expanded: false,
                                     });
                                 }
                                 ExecutionEvent::ToolFailed {
@@ -785,18 +1071,20 @@ impl App {
                                         role: ChatRole::Error,
                                         content: format!("Tool {} failed: {}", tool_name, error),
                                         timestamp: ts,
+                                        is_expanded: false,
                                     });
                                 }
                                 ExecutionEvent::ModelRequest { prompt_preview, .. } => {
-                                    let preview = if prompt_preview.len() > 50 {
-                                        format!("{}...", &prompt_preview[..47])
+                                    let preview = if prompt_preview.len() > 60 {
+                                        format!("{}...", &prompt_preview[..57])
                                     } else {
                                         prompt_preview.clone()
                                     };
                                     self.chat_messages.push(ChatMessageItem {
-                                        role: ChatRole::System,
-                                        content: format!("Model thinking: {}", preview),
+                                        role: ChatRole::Thinking,
+                                        content: format!("Planning next action:\n{}", preview),
                                         timestamp: ts,
+                                        is_expanded: self.thinking_expanded,
                                     });
                                 }
                                 _ => {}
@@ -813,6 +1101,89 @@ impl App {
             self.refresh();
         } else if new_run_id.is_some() {
             self.refresh();
+        }
+    }
+
+    // ==========================================
+    // Persistent Agent State Machine & Management
+    // ==========================================
+
+    /// Register a new persistent agent in the workspace.
+    pub fn register_agent(
+        &mut self,
+        id: String,
+        name: String,
+        role: String,
+        model: String,
+        policy: String,
+    ) {
+        let ws = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".to_string());
+        let agent = AgentView {
+            id,
+            name,
+            role,
+            policy,
+            status: "Ready".to_string(),
+            model,
+            workspace: ws,
+            tools: vec![
+                "read_file".into(),
+                "write_file".into(),
+                "list_dir".into(),
+                "shell".into(),
+                "git_*".into(),
+            ],
+            runs_count: 0,
+        };
+        self.agents.push(agent);
+    }
+
+    /// Transition a persistent agent to a new lifecycle state.
+    pub fn transition_agent_state(
+        &mut self,
+        id: &str,
+        new_state: AgentLifecycleState,
+    ) -> Result<(), String> {
+        if let Some(agent) = self
+            .agents
+            .iter_mut()
+            .find(|a| a.id.eq_ignore_ascii_case(id))
+        {
+            agent.status = new_state.as_str().to_string();
+            self.status_message = Some(format!(
+                "Agent '{}' transitioned to {}.",
+                id,
+                new_state.as_str()
+            ));
+            Ok(())
+        } else {
+            Err(format!("Agent '{}' not found", id))
+        }
+    }
+
+    /// Transition currently selected agent to RUNNING.
+    pub fn start_selected_agent(&mut self) {
+        if let Some(agent) = self.agents.get(self.selected_agent_idx) {
+            let id = agent.id.clone();
+            let _ = self.transition_agent_state(&id, AgentLifecycleState::Running);
+        }
+    }
+
+    /// Transition currently selected agent to STOPPED.
+    pub fn stop_selected_agent(&mut self) {
+        if let Some(agent) = self.agents.get(self.selected_agent_idx) {
+            let id = agent.id.clone();
+            let _ = self.transition_agent_state(&id, AgentLifecycleState::Stopped);
+        }
+    }
+
+    /// Transition currently selected agent to PAUSED.
+    pub fn pause_selected_agent(&mut self) {
+        if let Some(agent) = self.agents.get(self.selected_agent_idx) {
+            let id = agent.id.clone();
+            let _ = self.transition_agent_state(&id, AgentLifecycleState::Paused);
         }
     }
 

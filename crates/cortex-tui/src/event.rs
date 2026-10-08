@@ -10,8 +10,31 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Dedicated routing for the interactive Chat tab
+    // Dedicated routing for the interactive Chat harness tab
     if app.active_tab == ActiveTab::Chat {
+        // Handle Ctrl shortcuts first
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('t') | KeyCode::Char('T') => {
+                    app.toggle_thinking_expanded();
+                    return;
+                }
+                KeyCode::Char('u') | KeyCode::Char('U') => {
+                    app.chat_input_clear();
+                    return;
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    app.chat_input_home();
+                    return;
+                }
+                KeyCode::Char('e') | KeyCode::Char('E') => {
+                    app.chat_input_end();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         match key.code {
             KeyCode::Tab => {
                 app.next_tab();
@@ -23,7 +46,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 if app.chat_is_running {
                     app.cancel_chat_agent();
                 } else if !app.chat_input.is_empty() {
-                    app.chat_input.clear();
+                    app.chat_input_clear();
                 } else {
                     app.set_tab(ActiveTab::Dashboard);
                 }
@@ -32,7 +55,22 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 app.dispatch_chat();
             }
             KeyCode::Backspace => {
-                app.chat_input.pop();
+                app.chat_input_backspace();
+            }
+            KeyCode::Delete => {
+                app.chat_input_delete();
+            }
+            KeyCode::Left => {
+                app.chat_input_left();
+            }
+            KeyCode::Right => {
+                app.chat_input_right();
+            }
+            KeyCode::Home => {
+                app.chat_input_home();
+            }
+            KeyCode::End => {
+                app.chat_input_end();
             }
             KeyCode::PageUp => {
                 app.chat_scroll_up();
@@ -41,17 +79,23 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 app.chat_scroll_down();
             }
             KeyCode::Up => {
-                if app.chat_input.is_empty() {
+                if !app.chat_history.is_empty()
+                    && (app.chat_input.is_empty() || app.chat_history_idx.is_some())
+                {
+                    app.chat_history_prev();
+                } else {
                     app.chat_scroll_up();
                 }
             }
             KeyCode::Down => {
-                if app.chat_input.is_empty() {
+                if app.chat_history_idx.is_some() {
+                    app.chat_history_next();
+                } else {
                     app.chat_scroll_down();
                 }
             }
             KeyCode::Char(c) => {
-                app.chat_input.push(c);
+                app.chat_input_insert(c);
             }
             _ => {}
         }
@@ -125,6 +169,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter => {
             app.select_current();
+        }
+        // Agents lifecycle action shortcuts
+        KeyCode::Char('s') if app.active_tab == ActiveTab::Agents => {
+            app.start_selected_agent();
+        }
+        KeyCode::Char('x') if app.active_tab == ActiveTab::Agents => {
+            app.stop_selected_agent();
+        }
+        KeyCode::Char('p') if app.active_tab == ActiveTab::Agents => {
+            app.pause_selected_agent();
         }
         // Portals quick action shortcuts in normal mode
         KeyCode::Char('a') if app.active_tab == ActiveTab::Portals => {

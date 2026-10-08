@@ -278,7 +278,7 @@ fn render_tile(frame: &mut Frame, area: Rect, title: &str, value: &str, color: C
 fn render_agents(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .constraints([Constraint::Percentage(48), Constraint::Percentage(52)])
         .split(area);
 
     let rows: Vec<Row> = app
@@ -288,15 +288,43 @@ fn render_agents(frame: &mut Frame, app: &App, area: Rect) {
         .map(|(idx, agent)| {
             let is_selected = idx == app.selected_agent_idx;
             let style = if is_selected {
-                Style::default().bg(Color::DarkGray).fg(Color::White)
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
+            };
+
+            let (badge, badge_style) = match agent.status.as_str() {
+                "Running" | "RUNNING" => (
+                    "[RUNNING]",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                "Ready" | "READY" => (
+                    "[READY]",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                "Paused" | "PAUSED" => (
+                    "[PAUSED]",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                "Stopped" | "STOPPED" => ("[STOPPED]", Style::default().fg(Color::Red)),
+                _ => ("[IDLE]", Style::default().fg(Color::DarkGray)),
             };
 
             Row::new(vec![
                 Cell::from(agent.id.clone()),
                 Cell::from(agent.name.clone()),
-                Cell::from(agent.status.clone()).style(Style::default().fg(Color::Green)),
+                Cell::from(agent.model.clone()).style(Style::default().fg(Color::Yellow)),
+                Cell::from(Span::styled(badge, badge_style)),
+                Cell::from(agent.runs_count.to_string()),
             ])
             .style(style)
         })
@@ -306,12 +334,14 @@ fn render_agents(frame: &mut Frame, app: &App, area: Rect) {
         rows,
         [
             Constraint::Length(14),
-            Constraint::Length(22),
-            Constraint::Length(10),
+            Constraint::Min(16),
+            Constraint::Length(14),
+            Constraint::Length(11),
+            Constraint::Length(6),
         ],
     )
     .header(
-        Row::new(vec!["Agent ID", "Name", "Status"]).style(
+        Row::new(vec!["Agent ID", "Name", "Model", "Status", "Runs"]).style(
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -321,58 +351,126 @@ fn render_agents(frame: &mut Frame, app: &App, area: Rect) {
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title(" Registered Agents "),
+            .title(format!(" Persistent Agent Workers ({}) ", app.agents.len()))
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
     );
 
     frame.render_widget(table, chunks[0]);
 
     if let Some(agent) = app.agents.get(app.selected_agent_idx) {
+        let (badge, badge_style) = match agent.status.as_str() {
+            "Running" | "RUNNING" => (
+                "[RUNNING]",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            "Ready" | "READY" => (
+                "[READY]",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            "Paused" | "PAUSED" => (
+                "[PAUSED]",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            "Stopped" | "STOPPED" => ("[STOPPED]", Style::default().fg(Color::Red)),
+            _ => ("[IDLE]", Style::default().fg(Color::DarkGray)),
+        };
+
         let details = vec![
             Line::from(vec![
+                Span::styled("Agent Identifier: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    "Agent Identifier: ",
+                    &agent.id,
                     Style::default()
-                        .fg(Color::White)
+                        .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(&agent.id, Style::default().fg(Color::Cyan)),
+                Span::raw("    "),
+                Span::styled("Lifecycle: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(badge, badge_style),
             ]),
             Line::from(vec![
+                Span::styled("Display Name:     ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    "Name / Role:      ",
+                    &agent.name,
                     Style::default()
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(&agent.name, Style::default().fg(Color::White)),
             ]),
             Line::from(vec![
+                Span::styled("Role Description: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&agent.role, Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("Active Model:     ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&agent.model, Style::default().fg(Color::Yellow)),
+                Span::raw("    "),
+                Span::styled("Runs Recorded: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    "Status:           ",
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
+                    agent.runs_count.to_string(),
+                    Style::default().fg(Color::White),
                 ),
-                Span::styled(&agent.status, Style::default().fg(Color::Green)),
+            ]),
+            Line::from(vec![
+                Span::styled("Workspace Root:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&agent.workspace, Style::default().fg(Color::White)),
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "Assigned Operational Policy:",
+                "Operational Policy / Instruction:",
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )),
-            Line::from(agent.policy.clone()),
+            Line::from(format!("  \"{}\"", agent.policy)),
             Line::from(""),
             Line::from(Span::styled(
-                "Authorized Tool Permissions:",
+                "Authorized Tools & Capabilities:",
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
             )),
-            Line::from("  • read_file, write_file, list_dir (workspace boundary confined)"),
+            Line::from("  • read_file, write_file, list_dir (strictly workspace confined)"),
             Line::from("  • shell (timeout capped, sanitized environment)"),
-            Line::from("  • git_status, git_diff, git_log, git_commit (push denied)"),
+            Line::from("  • git_status, git_diff, git_log, git_commit"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Agent Lifecycle Actions:",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(vec![
+                Span::styled(
+                    "  [s] ",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Start / Resume Agent    "),
+                Span::styled(
+                    "[x] ",
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Stop Agent    "),
+                Span::styled(
+                    "[p] ",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("Pause Agent"),
+            ]),
         ];
 
         let detail_panel = Paragraph::new(details)
@@ -380,7 +478,12 @@ fn render_agents(frame: &mut Frame, app: &App, area: Rect) {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .title(" Agent Manifest & Capabilities "),
+                    .title(" Agent Manifest & Runtime Inspector ")
+                    .title_style(
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD),
+                    ),
             )
             .wrap(Wrap { trim: true });
 
@@ -844,57 +947,70 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // Active Portal Banner
+            Constraint::Length(3), // Top Harness Status Bar
             Constraint::Min(8),    // Conversation Stream
             Constraint::Length(3), // Input Bar
         ])
         .split(area);
 
-    // 1. Top banner: Active portal & execution status
+    // 1. Top banner: Modern harness status bar
     let status_style = if app.chat_is_running {
         Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Green)
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
     };
     let status_str = if app.chat_is_running {
-        "AGENT RUNNING (Press Esc to cancel)"
+        "⠋ RUNNING (Esc to abort)"
     } else {
-        "IDLE / READY"
+        "● READY"
+    };
+
+    let thinking_str = if app.thinking_expanded {
+        "Thinking: Expanded"
+    } else {
+        "Thinking: Collapsed (Ctrl+T)"
+    };
+    let thinking_style = if app.thinking_expanded {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
     };
 
     let banner_text = Line::from(vec![
-        Span::styled(" Active Portal: ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            &active_portal.name,
+            "◈ CORTEX HARNESS ",
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" | "),
+        Span::raw("│ "),
         Span::styled("Model: ", Style::default().fg(Color::DarkGray)),
         Span::styled(&active_portal.model_name, Style::default().fg(Color::White)),
-        Span::raw(" | "),
-        Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(status_str, status_style),
-        Span::raw(" | "),
-        Span::styled("Config: ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            active_portal.status_text(),
-            Style::default().fg(Color::Cyan),
+            format!(" ({})", active_portal.provider_kind),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(" │ "),
+        Span::styled(status_str, status_style),
+        Span::raw(" │ "),
+        Span::styled(thinking_str, thinking_style),
+        Span::raw(" │ "),
+        Span::styled(
+            "Type /help for slash commands",
+            Style::default().fg(Color::DarkGray),
         ),
     ]);
     let banner = Paragraph::new(banner_text).block(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .title(" Agent Control Plane ")
-            .title_style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            .border_style(Style::default().fg(Color::Cyan)),
     );
     frame.render_widget(banner, chunks[0]);
 
@@ -903,89 +1019,184 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     if app.chat_messages.is_empty() {
         text_lines.push(Line::from(""));
         text_lines.push(Line::from(Span::styled(
-            "  No agent tasks submitted yet in this session.",
+            "  ┌── ◈ Cortex Agent Runtime Harness ──────────────────────────────────────┐",
+            Style::default().fg(Color::Cyan),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "  │ Autonomous terminal coding harness & persistent multi-agent runtime.   │",
+            Style::default().fg(Color::Cyan),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "  │                                                                        │",
             Style::default().fg(Color::DarkGray),
         )));
         text_lines.push(Line::from(Span::styled(
-            "  Type an autonomous task prompt below and press Enter to dispatch.",
+            "  │ Quick Start:                                                           │",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "  │  • Type a coding prompt below and press Enter to dispatch an agent.    │",
+            Style::default().fg(Color::White),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "  │  • Type '/help' to discover slash commands (/model, /portal, /agents). │",
+            Style::default().fg(Color::White),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "  │  • Type '/agents' to visualize persistent worker topologies.           │",
+            Style::default().fg(Color::White),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "  │  • Press Ctrl+T or type '/thinking' to toggle reasoning traces.        │",
+            Style::default().fg(Color::White),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "  │                                                                        │",
             Style::default().fg(Color::DarkGray),
         )));
         text_lines.push(Line::from(Span::styled(
-            "  Examples:",
-            Style::default().fg(Color::DarkGray),
+            "  │ Examples:                                                              │",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         )));
         text_lines.push(Line::from(Span::styled(
-            "    • 'Inspect repository files and run cargo test'",
-            Style::default().fg(Color::Yellow),
+            "  │   > Inspect repository files and run cargo test                        │",
+            Style::default().fg(Color::Cyan),
         )));
         text_lines.push(Line::from(Span::styled(
-            "    • 'Create a new utility function in src/lib.rs with unit tests'",
-            Style::default().fg(Color::Yellow),
+            "  │   > /model set claude-3-5-sonnet-20241022                              │",
+            Style::default().fg(Color::Cyan),
         )));
         text_lines.push(Line::from(Span::styled(
-            "    • 'Analyze git log and create a summary of recent changes'",
-            Style::default().fg(Color::Yellow),
+            "  │   > /diff                                                              │",
+            Style::default().fg(Color::Cyan),
         )));
+        text_lines.push(Line::from(Span::styled(
+            "  └────────────────────────────────────────────────────────────────────────┘",
+            Style::default().fg(Color::Cyan),
+        )));
+        text_lines.push(Line::from(""));
     } else {
         for msg in &app.chat_messages {
-            let (prefix_span, content_style) = match msg.role {
-                ChatRole::User => (
-                    Span::styled(
-                        format!("[{}] You: ", msg.timestamp),
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Style::default().fg(Color::White),
-                ),
-                ChatRole::Assistant => (
-                    Span::styled(
-                        format!("[{}] Cortex: ", msg.timestamp),
+            match msg.role {
+                ChatRole::User => {
+                    text_lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("❯ You [{}]: ", msg.timestamp),
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            &msg.content,
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ]));
+                    text_lines.push(Line::from(""));
+                }
+                ChatRole::Thinking => {
+                    if msg.is_expanded {
+                        text_lines.push(Line::from(Span::styled(
+                            "  ┌─ ▼ Thinking Process (expanded · press Ctrl+T or /thinking to collapse) ─────",
+                            Style::default().fg(Color::Yellow),
+                        )));
+                        for line in msg.content.lines() {
+                            text_lines.push(Line::from(vec![
+                                Span::styled("  │ ", Style::default().fg(Color::Yellow)),
+                                Span::styled(line, Style::default().fg(Color::DarkGray)),
+                            ]));
+                        }
+                        text_lines.push(Line::from(Span::styled(
+                            "  └─────────────────────────────────────────────────────────────────────────────",
+                            Style::default().fg(Color::Yellow),
+                        )));
+                    } else {
+                        let lines_count = msg.content.lines().count();
+                        text_lines.push(Line::from(Span::styled(
+                            format!(
+                                "  ▶ Thinking Process (collapsed · {} lines) [Press Ctrl+T or /thinking to expand]",
+                                lines_count
+                            ),
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::DIM),
+                        )));
+                    }
+                    text_lines.push(Line::from(""));
+                }
+                ChatRole::Assistant => {
+                    text_lines.push(Line::from(vec![Span::styled(
+                        format!("◆ Cortex [{}]:", msg.timestamp),
                         Style::default()
                             .fg(Color::Green)
                             .add_modifier(Modifier::BOLD),
-                    ),
-                    Style::default().fg(Color::White),
-                ),
-                ChatRole::Tool => (
-                    Span::styled(
-                        format!("[{}] [Tool] ", msg.timestamp),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                    Style::default().fg(Color::Yellow),
-                ),
-                ChatRole::System => (
-                    Span::styled(
-                        format!("[{}] [System] ", msg.timestamp),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Style::default().fg(Color::Gray),
-                ),
-                ChatRole::Error => (
-                    Span::styled(
-                        format!("[{}] [Error] ", msg.timestamp),
-                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-                    ),
-                    Style::default().fg(Color::Red),
-                ),
-            };
-
-            for (i, line) in msg.content.lines().enumerate() {
-                if i == 0 {
+                    )]));
+                    for line in msg.content.lines() {
+                        text_lines.push(Line::from(vec![
+                            Span::raw("  "),
+                            Span::styled(line, Style::default().fg(Color::White)),
+                        ]));
+                    }
+                    text_lines.push(Line::from(""));
+                }
+                ChatRole::Tool => {
                     text_lines.push(Line::from(vec![
-                        prefix_span.clone(),
-                        Span::styled(line, content_style),
-                    ]));
-                } else {
-                    text_lines.push(Line::from(vec![
-                        Span::raw("             "),
-                        Span::styled(line, content_style),
+                        Span::styled("  ⚙ ", Style::default().fg(Color::Yellow)),
+                        Span::styled(&msg.content, Style::default().fg(Color::Yellow)),
                     ]));
                 }
+                ChatRole::System => {
+                    for (i, line) in msg.content.lines().enumerate() {
+                        if i == 0 {
+                            text_lines.push(Line::from(vec![
+                                Span::styled("  ℹ ", Style::default().fg(Color::Cyan)),
+                                Span::styled(line, Style::default().fg(Color::Gray)),
+                            ]));
+                        } else {
+                            text_lines.push(Line::from(vec![
+                                Span::raw("    "),
+                                Span::styled(line, Style::default().fg(Color::Gray)),
+                            ]));
+                        }
+                    }
+                    text_lines.push(Line::from(""));
+                }
+                ChatRole::Error => {
+                    text_lines.push(Line::from(vec![
+                        Span::styled(
+                            "  ✖ ",
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(&msg.content, Style::default().fg(Color::Red)),
+                    ]));
+                    text_lines.push(Line::from(""));
+                }
             }
-            text_lines.push(Line::from(""));
         }
     }
+
+    if app.chat_is_running {
+        text_lines.push(Line::from(vec![Span::styled(
+            "  ⠋ Cortex is executing & thinking... (Press Esc to cancel)",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )]));
+        text_lines.push(Line::from(""));
+    }
+
+    // Dynamic Autoscroll calculation
+    let total_lines = text_lines.len();
+    let visible_height = chunks[1].height.saturating_sub(2) as usize; // Border box margin
+    let scroll_y = if app.chat_auto_scroll {
+        total_lines.saturating_sub(visible_height)
+    } else {
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        max_scroll.saturating_sub(app.chat_scroll)
+    };
 
     let chat_panel = Paragraph::new(text_lines)
         .block(
@@ -999,21 +1210,32 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 ),
         )
-        .scroll((app.chat_scroll as u16, 0))
+        .scroll((scroll_y as u16, 0))
         .wrap(Wrap { trim: false });
     frame.render_widget(chat_panel, chunks[1]);
 
-    // 3. Input bar
-    let input_title = if app.chat_is_running {
-        " Agent Working... (Press Esc to cancel) "
+    // 3. Input bar with cursor rendering
+    let input_title = if app.chat_input.starts_with('/') {
+        " Slash Command (Press Enter to execute) "
+    } else if app.chat_is_running {
+        " Agent Executing... (Press Esc to cancel) "
     } else {
-        " Prompt / Task Input (Press Enter to dispatch agent) "
+        " Task Prompt / Slash Command (Type /help for catalog | Ctrl+T: Thinking) "
     };
-    let input_border_color = if app.chat_is_running {
+
+    let input_border_color = if app.chat_input.starts_with('/') {
+        Color::Magenta
+    } else if app.chat_is_running {
         Color::Yellow
     } else {
         Color::Cyan
     };
+
+    // Safe cursor slicing
+    let cursor_pos = app.chat_cursor.min(app.chat_input.len());
+    let before_cursor = &app.chat_input[..cursor_pos];
+    let after_cursor = &app.chat_input[cursor_pos..];
+
     let input_line = Line::from(vec![
         Span::styled(
             "> ",
@@ -1021,9 +1243,16 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(&app.chat_input, Style::default().fg(Color::White)),
-        Span::styled("█", Style::default().fg(Color::Cyan)),
+        Span::styled(before_cursor, Style::default().fg(Color::White)),
+        Span::styled(
+            "█",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::RAPID_BLINK),
+        ),
+        Span::styled(after_cursor, Style::default().fg(Color::White)),
     ]);
+
     let input_widget = Paragraph::new(input_line).block(
         Block::default()
             .borders(Borders::ALL)
@@ -1493,14 +1722,43 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let hints = match app.active_tab {
         ActiveTab::Chat => vec![
             Span::styled("Enter", Style::default().fg(Color::Yellow)),
-            Span::raw(": Dispatch | "),
-            Span::styled("Esc", Style::default().fg(Color::Yellow)),
-            Span::raw(": Cancel/Back | "),
+            Span::raw(": Send | "),
+            Span::styled("Ctrl+T", Style::default().fg(Color::Yellow)),
+            Span::raw(": Thinking | "),
+            Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
+            Span::raw(": History | "),
             Span::styled("Tab", Style::default().fg(Color::Yellow)),
-            Span::raw(": Switch Tabs | "),
+            Span::raw(": Tabs | "),
             Span::styled("PageUp/Dn", Style::default().fg(Color::Yellow)),
             Span::raw(": Scroll | "),
             Span::styled("Ctrl+C", Style::default().fg(Color::Yellow)),
+            Span::raw(": Quit"),
+        ],
+        ActiveTab::Agents => vec![
+            Span::styled(
+                "s",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Start | "),
+            Span::styled(
+                "x",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Stop | "),
+            Span::styled(
+                "p",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(": Pause | "),
+            Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
+            Span::raw(": Select | "),
+            Span::styled("Tab", Style::default().fg(Color::Yellow)),
+            Span::raw(": Tabs | "),
+            Span::styled("q", Style::default().fg(Color::Yellow)),
             Span::raw(": Quit"),
         ],
         ActiveTab::Portals => {
