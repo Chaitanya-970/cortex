@@ -6,7 +6,6 @@ on:
 
 permissions:
   issues: write
-  reactions: write
 
 jobs:
   assign:
