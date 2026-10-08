@@ -304,6 +304,14 @@ impl UserSettings {
                 } else {
                     None
                 }
+            } else if self.model.eq_ignore_ascii_case(model) {
+                Some(u.to_string())
+            } else if lower.starts_with("gpt-")
+                || lower.starts_with("o1")
+                || lower.starts_with("o3")
+                || lower.starts_with("claude")
+            {
+                None
             } else {
                 Some(u.to_string())
             }

@@ -68,7 +68,13 @@ pub fn create_model_provider(
             .or_else(|| std::env::var("CORTEX_API_BASE").ok())
             .or_else(|| std::env::var("cortex_api_base").ok())
             .or_else(|| settings.resolve_base_url(model));
-        Ok(Arc::new(OpenAiCompatibleProvider::new(model, key, url)))
+        let mut provider = OpenAiCompatibleProvider::new(model, key, url);
+        if let Some(p) = &settings.provider {
+            if settings.model.eq_ignore_ascii_case(model) {
+                provider = provider.with_provider(p);
+            }
+        }
+        Ok(Arc::new(provider))
     }
 }
 

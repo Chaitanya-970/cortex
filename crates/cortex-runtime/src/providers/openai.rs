@@ -36,20 +36,30 @@ impl OpenAiCompatibleProvider {
             base.push_str("/openai");
         }
 
-        let provider_name =
-            if base.contains("localhost") || base.contains("127.0.0.1") || base.contains("11434") {
-                "ollama"
-            } else if base.contains("openrouter") {
-                "openrouter"
-            } else if base.contains("deepseek") {
-                "deepseek"
-            } else if base.contains("groq") {
-                "groq"
-            } else if base.contains("generativelanguage.googleapis.com") {
-                "google"
-            } else {
-                "openai"
-            };
+        let lower_model = model_str.to_lowercase();
+        let provider_name = if lower_model.starts_with("ollama/") || base.contains("11434") {
+            "ollama"
+        } else if lower_model.contains("gemini")
+            || lower_model.contains("antigravity")
+            || base.contains("generativelanguage.googleapis.com")
+        {
+            "google"
+        } else if lower_model.starts_with("gpt-")
+            || lower_model.starts_with("o1")
+            || lower_model.starts_with("o3")
+        {
+            "openai"
+        } else if base.contains("openrouter") {
+            "openrouter"
+        } else if base.contains("deepseek") || lower_model.contains("deepseek") {
+            "deepseek"
+        } else if base.contains("groq") {
+            "groq"
+        } else if base.contains("localhost") || base.contains("127.0.0.1") {
+            "local"
+        } else {
+            "openai"
+        };
 
         Self {
             descriptor: ModelDescriptor::new(provider_name, &model_str),
@@ -59,6 +69,12 @@ impl OpenAiCompatibleProvider {
             timeout_secs: 60,
             last_usage: Mutex::new(None),
         }
+    }
+
+    /// Set explicit provider identifier for model descriptor.
+    pub fn with_provider(mut self, provider: impl Into<String>) -> Self {
+        self.descriptor = ModelDescriptor::new(provider.into(), &self.model);
+        self
     }
 
     /// Set HTTP request timeout in seconds.
@@ -180,9 +196,16 @@ impl ModelProvider for OpenAiCompatibleProvider {
         }
 
         let response = req.send_json(body).map_err(|e| {
+            let detail = match e {
+                ureq::Error::Status(status, resp) => {
+                    let text = resp.into_string().unwrap_or_default();
+                    format!("status code {}: {}", status, text)
+                }
+                ureq::Error::Transport(t) => format!("transport error: {}", t),
+            };
             CortexError::Internal(format!(
                 "HTTP request to model API ({}) failed: {}",
-                endpoint, e
+                endpoint, detail
             ))
         })?;
 
@@ -317,6 +340,19 @@ impl ModelProvider for OpenAiCompatibleProvider {
                     break;
                 }
                 if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(usage) = chunk.get("usage") {
+                        let prompt = usage
+                            .get("prompt_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as usize;
+                        let completion = usage
+                            .get("completion_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as usize;
+                        *self.last_usage.lock().unwrap() =
+                            Some(ModelUsage::new(prompt, completion));
+                    }
+
                     if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
                         if let Some(choice) = choices.first() {
                             if let Some(delta) = choice.get("delta") {

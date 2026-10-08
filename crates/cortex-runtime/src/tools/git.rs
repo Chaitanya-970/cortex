@@ -230,7 +230,9 @@ impl GitCommitTool {
                     "properties": {
                         "message": { "type": "string" },
                         "paths": {
-                            "type": "array"
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Optional list of file paths to stage and commit"
                         }
                     },
                     "required": ["message"]
