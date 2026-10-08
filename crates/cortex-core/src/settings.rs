@@ -36,7 +36,7 @@ pub struct UserSettings {
     #[serde(default, alias = "key")]
     pub api_key: Option<String>,
 
-    /// Custom base URL for model inference endpoints (e.g. "http://localhost:11434/v1" or "https://openrouter.ai/api/v1").
+    /// Custom base URL for model inference endpoints (e.g. `http://localhost:11434/v1` or `https://openrouter.ai/api/v1`).
     #[serde(default, alias = "url", alias = "api_base")]
     pub base_url: Option<String>,
 
@@ -349,10 +349,12 @@ mod tests {
 
     #[test]
     fn test_resolve_keys_and_urls() {
-        let mut settings = UserSettings::default();
-        settings.openai_api_key = Some("sk-openai".to_string());
-        settings.anthropic_api_key = Some("sk-anthropic".to_string());
-        settings.ollama_base_url = Some("http://localhost:11434/v1".to_string());
+        let settings = UserSettings {
+            openai_api_key: Some("sk-openai".to_string()),
+            anthropic_api_key: Some("sk-anthropic".to_string()),
+            ollama_base_url: Some("http://localhost:11434/v1".to_string()),
+            ..Default::default()
+        };
 
         assert_eq!(
             settings.resolve_api_key("gpt-4o"),
@@ -377,11 +379,13 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
         let file_path = temp_dir.join("settings.json");
 
-        let mut settings = UserSettings::default();
-        settings.model = "deepseek-coder".to_string();
-        settings.api_key = Some("sk-secret".to_string());
-        settings.base_url = Some("https://api.deepseek.com/v1".to_string());
-        settings.max_iterations = 30;
+        let settings = UserSettings {
+            model: "deepseek-coder".to_string(),
+            api_key: Some("sk-secret".to_string()),
+            base_url: Some("https://api.deepseek.com/v1".to_string()),
+            max_iterations: 30,
+            ..Default::default()
+        };
 
         settings.save_to(&file_path).unwrap();
 
