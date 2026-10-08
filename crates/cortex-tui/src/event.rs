@@ -6,6 +6,15 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 /// Process a single keyboard event and update [`App`] state accordingly.
 pub fn handle_key(app: &mut App, key: KeyEvent) {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        if app.active_tab == ActiveTab::Chat {
+            if app.chat_is_running {
+                app.cancel_chat_agent();
+                return;
+            } else if !app.chat_input.is_empty() {
+                app.chat_input_clear();
+                return;
+            }
+        }
         app.should_quit = true;
         return;
     }
@@ -19,6 +28,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                     app.toggle_thinking_expanded();
                     return;
                 }
+                KeyCode::Char('o') | KeyCode::Char('O') => {
+                    app.toggle_tool_calls_expanded();
+                    return;
+                }
                 KeyCode::Char('u') | KeyCode::Char('U') => {
                     app.chat_input_clear();
                     return;
@@ -29,6 +42,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 }
                 KeyCode::Char('e') | KeyCode::Char('E') => {
                     app.chat_input_end();
+                    return;
+                }
+                KeyCode::Char('j') | KeyCode::Char('J') => {
+                    app.chat_input_insert('\n');
                     return;
                 }
                 _ => {}
@@ -60,7 +77,17 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Enter => {
-                app.dispatch_chat();
+                if key.modifiers.contains(KeyModifiers::ALT)
+                    || key.modifiers.contains(KeyModifiers::SHIFT)
+                {
+                    app.chat_input_insert('\n');
+                } else if app.chat_input.ends_with('\\') {
+                    app.chat_input.pop();
+                    app.chat_cursor = app.chat_input.len();
+                    app.chat_input_insert('\n');
+                } else {
+                    app.dispatch_chat();
+                }
             }
             KeyCode::Backspace => {
                 app.chat_input_backspace();
@@ -87,7 +114,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 app.chat_scroll_down();
             }
             KeyCode::Up => {
-                if !app.chat_history.is_empty()
+                if app.chat_input.contains('\n') {
+                    app.chat_input_up();
+                } else if !app.chat_history.is_empty()
                     && (app.chat_input.is_empty() || app.chat_history_idx.is_some())
                 {
                     app.chat_history_prev();
@@ -96,7 +125,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 }
             }
             KeyCode::Down => {
-                if app.chat_history_idx.is_some() {
+                if app.chat_input.contains('\n') {
+                    app.chat_input_down();
+                } else if app.chat_history_idx.is_some() {
                     app.chat_history_next();
                 } else {
                     app.chat_scroll_down();
@@ -319,5 +350,48 @@ mod tests {
         handle_key(&mut app, make_key(KeyCode::Enter));
         assert_eq!(app.portal_input_mode, PortalInputMode::Normal);
         assert_eq!(app.portals[1].api_key, Some("x".to_string()));
+    }
+
+    #[test]
+    fn test_ctrl_c_cancels_or_clears_without_quitting() {
+        let mut app = App::new(None);
+        app.chat_input = "draft task text".to_string();
+        app.chat_cursor = app.chat_input.len();
+
+        // Ctrl+C with non-empty input should clear input without quitting
+        handle_key(&mut app, make_ctrl_key(KeyCode::Char('c')));
+        assert!(!app.should_quit);
+        assert_eq!(app.chat_input, "");
+
+        // Next Ctrl+C with empty input should quit
+        handle_key(&mut app, make_ctrl_key(KeyCode::Char('c')));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_ctrl_o_and_multiline_enter() {
+        let mut app = App::new(None);
+        assert!(!app.tool_calls_expanded);
+
+        // Ctrl+O toggles tool calls expansion
+        handle_key(&mut app, make_ctrl_key(KeyCode::Char('o')));
+        assert!(app.tool_calls_expanded);
+        handle_key(&mut app, make_ctrl_key(KeyCode::Char('o')));
+        assert!(!app.tool_calls_expanded);
+
+        // Backslash + Enter creates newline for multi-line input
+        app.chat_input = "line 1\\".to_string();
+        handle_key(&mut app, make_key(KeyCode::Enter));
+        assert_eq!(app.chat_input, "line 1\n");
+
+        // Alt+Enter also creates newline
+        let alt_enter = KeyEvent {
+            code: KeyCode::Enter,
+            modifiers: KeyModifiers::ALT,
+            kind: crossterm::event::KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        };
+        handle_key(&mut app, alt_enter);
+        assert_eq!(app.chat_input, "line 1\n\n");
     }
 }

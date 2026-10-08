@@ -5,6 +5,32 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+/// Security and authorization permission level required by a tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionLevel {
+    /// Read-only inspection (e.g. read_file, grep, git_status). Allowed without approval.
+    #[default]
+    ReadOnly,
+    /// Workspace filesystem modification (e.g. write_file, edit_file, delete_file).
+    WorkspaceWrite,
+    /// Subprocess or command execution (e.g. bash, execute_command).
+    Execute,
+    /// High-risk or potentially destructive action.
+    Danger,
+}
+
+impl std::fmt::Display for PermissionLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ReadOnly => write!(f, "read_only"),
+            Self::WorkspaceWrite => write!(f, "workspace_write"),
+            Self::Execute => write!(f, "execute"),
+            Self::Danger => write!(f, "danger"),
+        }
+    }
+}
+
 /// Specification and metadata of an agent tool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -14,6 +40,9 @@ pub struct ToolDefinition {
     pub description: String,
     /// JSON schema describing expected input parameters.
     pub parameters: serde_json::Value,
+    /// Permission level required to execute this tool.
+    #[serde(default)]
+    pub permission_level: PermissionLevel,
 }
 
 impl ToolDefinition {
@@ -27,7 +56,14 @@ impl ToolDefinition {
             name: name.into(),
             description: description.into(),
             parameters,
+            permission_level: PermissionLevel::ReadOnly,
         }
+    }
+
+    /// Attach a specific [`PermissionLevel`] to this tool definition.
+    pub fn with_permission(mut self, permission_level: PermissionLevel) -> Self {
+        self.permission_level = permission_level;
+        self
     }
 }
 
@@ -71,9 +107,19 @@ pub trait Tool: Send + Sync {
         &self.definition().name
     }
 
+    /// Permission level required to execute this tool.
+    fn permission_level(&self) -> PermissionLevel {
+        self.definition().permission_level
+    }
+
     /// Check if the tool is supported on the current platform/runtime environment.
     fn is_available(&self) -> Result<bool> {
         Ok(true)
+    }
+
+    /// Format or pretty-print the execution result for terminal UI display.
+    fn format_output(&self, result: &ToolResult) -> String {
+        result.output.clone()
     }
 
     /// Execute the tool with validated JSON input arguments.

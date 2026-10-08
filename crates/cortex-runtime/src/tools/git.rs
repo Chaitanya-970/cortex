@@ -25,7 +25,8 @@ impl GitStatusTool {
                 "git_status",
                 "Displays the status of the repository working tree",
                 json!({ "type": "object" }),
-            ),
+            )
+            .with_permission(crate::tool::PermissionLevel::ReadOnly),
         }
     }
 }
@@ -67,7 +68,8 @@ impl GitDiffTool {
                         "path": { "type": "string" }
                     }
                 }),
-            ),
+            )
+            .with_permission(crate::tool::PermissionLevel::ReadOnly),
         }
     }
 }
@@ -116,7 +118,8 @@ impl GitLogTool {
                         "max_count": { "type": "integer" }
                     }
                 }),
-            ),
+            )
+            .with_permission(crate::tool::PermissionLevel::ReadOnly),
         }
     }
 }
@@ -161,7 +164,8 @@ impl GitBranchTool {
                     },
                     "required": ["name"]
                 }),
-            ),
+            )
+            .with_permission(crate::tool::PermissionLevel::ReadOnly),
         }
     }
 }
@@ -231,7 +235,8 @@ impl GitCommitTool {
                     },
                     "required": ["message"]
                 }),
-            ),
+            )
+            .with_permission(crate::tool::PermissionLevel::WorkspaceWrite),
         }
     }
 }
@@ -306,7 +311,8 @@ impl GitPushTool {
                 "git_push",
                 "Pushes commits to a remote repository (strictly disabled)",
                 json!({ "type": "object" }),
-            ),
+            )
+            .with_permission(crate::tool::PermissionLevel::Danger),
         }
     }
 }

@@ -50,6 +50,40 @@ pub enum ChatMessage {
     },
 }
 
+/// Task or todo item maintained by the agent during problem solving.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodoItem {
+    /// Unique identifier for the item.
+    pub id: String,
+    /// Task description or objective.
+    pub text: String,
+    /// Completion status.
+    pub completed: bool,
+}
+
+/// Authorization and confirmation mode for tool execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PermissionState {
+    /// Interactive confirmation for modifying or executing tools.
+    #[default]
+    AskConfirm,
+    /// Auto-accept (YOLO) mode where non-dangerous tools execute automatically.
+    AutoAccept,
+}
+
+/// Metadata describing the active agent session.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct SessionMetadata {
+    /// ISO 8601 start timestamp.
+    pub started_at: String,
+    /// Model name identifier.
+    pub model_name: String,
+    /// Provider family (e.g. "openai", "anthropic", "ollama").
+    pub provider_kind: String,
+    /// Total execution cost accumulator in USD.
+    pub cost_usd: f64,
+}
+
 /// Execution context maintaining conversation history and workspace state.
 #[derive(Debug, Clone)]
 pub struct AgentContext {
@@ -65,6 +99,16 @@ pub struct AgentContext {
     pub iterations: usize,
     /// Available tool definitions provided to the model.
     pub tools: Vec<ToolDefinition>,
+    /// Current working directory path for relative resolutions.
+    pub current_dir: std::path::PathBuf,
+    /// List of file paths modified during this session.
+    pub modified_files: Vec<String>,
+    /// List of active tasks/todos tracked by the agent.
+    pub todos: Vec<TodoItem>,
+    /// Active permission mode for tool authorization.
+    pub permission_state: PermissionState,
+    /// Session metadata and telemetry.
+    pub session_metadata: SessionMetadata,
 }
 
 impl AgentContext {
@@ -81,6 +125,11 @@ impl AgentContext {
             workspace: None,
             iterations: 0,
             tools: Vec::new(),
+            current_dir: std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            modified_files: Vec::new(),
+            todos: Vec::new(),
+            permission_state: PermissionState::default(),
+            session_metadata: SessionMetadata::default(),
         }
     }
 
@@ -92,6 +141,7 @@ impl AgentContext {
 
     /// Attach a [`Workspace`] boundary to this context.
     pub fn with_workspace(mut self, workspace: Arc<Workspace>) -> Self {
+        self.current_dir = workspace.root().to_path_buf();
         self.workspace = Some(workspace);
         self
     }
@@ -102,9 +152,39 @@ impl AgentContext {
         self
     }
 
+    /// Set the permission state for this context.
+    pub fn with_permission_state(mut self, state: PermissionState) -> Self {
+        self.permission_state = state;
+        self
+    }
+
     /// Append a message to the context history.
     pub fn push_message(&mut self, message: ChatMessage) {
         self.messages.push(message);
+    }
+
+    /// Record a modified file into session tracking.
+    pub fn record_modified_file(&mut self, path: impl Into<String>) {
+        let p = path.into();
+        if !self.modified_files.contains(&p) {
+            self.modified_files.push(p);
+        }
+    }
+
+    /// Add or update a todo item.
+    pub fn upsert_todo(&mut self, id: impl Into<String>, text: impl Into<String>, completed: bool) {
+        let id_str = id.into();
+        let text_str = text.into();
+        if let Some(existing) = self.todos.iter_mut().find(|t| t.id == id_str) {
+            existing.text = text_str;
+            existing.completed = completed;
+        } else {
+            self.todos.push(TodoItem {
+                id: id_str,
+                text: text_str,
+                completed,
+            });
+        }
     }
 }
 
@@ -418,6 +498,18 @@ impl AgentLoop {
                                     };
                                     store.record_event(&EventRecord::new(sequence, ev))?;
                                     sequence += 1;
+                                }
+
+                                if !res.is_error
+                                    && (call.name == "write_file"
+                                        || call.name == "edit_file"
+                                        || call.name == "delete_file")
+                                {
+                                    if let Some(path_str) =
+                                        call.arguments.get("path").and_then(|p| p.as_str())
+                                    {
+                                        context.record_modified_file(path_str);
+                                    }
                                 }
 
                                 context.push_message(ChatMessage::ToolResult {

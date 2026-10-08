@@ -320,6 +320,41 @@ pub struct AgentExecutionHandle {
     pub run_id: Option<String>,
 }
 
+/// Query the current git repository branch and dirty status, if in a git directory.
+pub fn detect_git_branch_status() -> Option<String> {
+    let branch_output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+
+    if !branch_output.status.success() {
+        return None;
+    }
+
+    let branch = String::from_utf8_lossy(&branch_output.stdout)
+        .trim()
+        .to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        return None;
+    }
+
+    let status_output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .ok();
+
+    let is_dirty = match status_output {
+        Some(out) if out.status.success() => !out.stdout.is_empty(),
+        _ => false,
+    };
+
+    if is_dirty {
+        Some(format!("git: {}*", branch))
+    } else {
+        Some(format!("git: {}", branch))
+    }
+}
+
 /// Primary application state container for the TUI client.
 pub struct App {
     /// Currently focused navigation tab.
@@ -362,6 +397,10 @@ pub struct App {
     pub chat_auto_scroll: bool,
     /// Global expansion state for thinking traces.
     pub thinking_expanded: bool,
+    /// Global expansion state for tool call execution outputs.
+    pub tool_calls_expanded: bool,
+    /// Git repository branch and status indicator, if available.
+    pub git_branch_info: Option<String>,
     /// Message stream scroll offset when manual scrolling is active.
     pub chat_scroll: usize,
     /// Whether an agent task is actively executing in background.
@@ -462,6 +501,8 @@ impl App {
             chat_history_idx: None,
             chat_auto_scroll: true,
             thinking_expanded: false,
+            tool_calls_expanded: false,
+            git_branch_info: detect_git_branch_status(),
             chat_scroll: 0,
             chat_is_running: false,
             chat_handle: None,
@@ -563,6 +604,7 @@ impl App {
 
     /// Refresh state by querying the persistent [`RunStore`].
     pub fn refresh(&mut self) {
+        self.git_branch_info = detect_git_branch_status();
         if let Some(store) = &self.store {
             if let Ok(runs) = store.list_runs(50) {
                 self.runs = runs;
@@ -771,6 +813,44 @@ impl App {
         self.chat_cursor = self.chat_input.len();
     }
 
+    /// Move cursor up one line in multi-line chat input buffer.
+    pub fn chat_input_up(&mut self) {
+        if !self.chat_input.contains('\n') {
+            return;
+        }
+        let before = &self.chat_input[..self.chat_cursor];
+        if let Some(prev_nl) = before.rfind('\n') {
+            let line_before_prev = &before[..prev_nl];
+            let prev_line_start = line_before_prev.rfind('\n').map(|p| p + 1).unwrap_or(0);
+            let col = before.len() - prev_nl - 1;
+            let prev_line_len = prev_nl - prev_line_start;
+            self.chat_cursor = prev_line_start + col.min(prev_line_len);
+        }
+    }
+
+    /// Move cursor down one line in multi-line chat input buffer.
+    pub fn chat_input_down(&mut self) {
+        if !self.chat_input.contains('\n') {
+            return;
+        }
+        let after = &self.chat_input[self.chat_cursor..];
+        if let Some(next_nl) = after.find('\n') {
+            let next_line_start = self.chat_cursor + next_nl + 1;
+            let line_after = &self.chat_input[next_line_start..];
+            let next_line_end = line_after
+                .find('\n')
+                .map(|p| next_line_start + p)
+                .unwrap_or(self.chat_input.len());
+            let current_line_start = self.chat_input[..self.chat_cursor]
+                .rfind('\n')
+                .map(|p| p + 1)
+                .unwrap_or(0);
+            let col = self.chat_cursor.saturating_sub(current_line_start);
+            let next_line_len = next_line_end.saturating_sub(next_line_start);
+            self.chat_cursor = next_line_start + col.min(next_line_len);
+        }
+    }
+
     /// Clear chat prompt input line and reset cursor.
     pub fn chat_input_clear(&mut self) {
         self.chat_input.clear();
@@ -825,6 +905,22 @@ impl App {
     pub fn toggle_thinking_expanded(&mut self) {
         let new_state = !self.thinking_expanded;
         self.set_thinking_expanded(new_state);
+    }
+
+    /// Set tool execution output expansion state globally and update all existing tool items.
+    pub fn set_tool_calls_expanded(&mut self, expanded: bool) {
+        self.tool_calls_expanded = expanded;
+        for msg in &mut self.chat_messages {
+            if msg.role == ChatRole::Tool {
+                msg.is_expanded = expanded;
+            }
+        }
+    }
+
+    /// Toggle tool execution output expansion.
+    pub fn toggle_tool_calls_expanded(&mut self) {
+        let new_state = !self.tool_calls_expanded;
+        self.set_tool_calls_expanded(new_state);
     }
 
     /// Scroll chat messages view upwards.
@@ -1057,34 +1153,29 @@ impl App {
                                     ..
                                 } => {
                                     let args_str = arguments.to_string();
-                                    let preview = if args_str.len() > 60 {
-                                        format!("{}...", &args_str[..57])
-                                    } else {
-                                        args_str
-                                    };
                                     self.chat_messages.push(ChatMessageItem {
                                         role: ChatRole::Tool,
-                                        content: format!("Tool call: {} ({})", tool_name, preview),
+                                        content: format!(
+                                            "Tool `{}` executing with args:\n{}",
+                                            tool_name, args_str
+                                        ),
                                         timestamp: ts,
-                                        is_expanded: false,
+                                        is_expanded: self.tool_calls_expanded,
                                     });
                                 }
                                 ExecutionEvent::ToolCompleted {
                                     tool_name, output, ..
                                 } => {
-                                    let preview = if output.len() > 60 {
-                                        format!("{}...", &output[..57])
+                                    let content = if output.trim().is_empty() {
+                                        format!("Tool `{}` completed successfully.", tool_name)
                                     } else {
-                                        output.clone()
+                                        format!("Tool `{}` completed:\n{}", tool_name, output)
                                     };
                                     self.chat_messages.push(ChatMessageItem {
                                         role: ChatRole::Tool,
-                                        content: format!(
-                                            "Tool {} finished -> {}",
-                                            tool_name, preview
-                                        ),
+                                        content,
                                         timestamp: ts,
-                                        is_expanded: false,
+                                        is_expanded: self.tool_calls_expanded,
                                     });
                                 }
                                 ExecutionEvent::ToolFailed {
@@ -1463,18 +1554,7 @@ fn execute_chat_agent(
     };
 
     let registry = ToolRegistry::new();
-    let reg_res = (|| -> cortex_core::Result<()> {
-        registry.register(Arc::new(tools::ReadFileTool::new(ws.clone())))?;
-        registry.register(Arc::new(tools::WriteFileTool::new(ws.clone())))?;
-        registry.register(Arc::new(tools::ListDirTool::new(ws.clone())))?;
-        registry.register(Arc::new(tools::ShellTool::new(ws.clone())))?;
-        registry.register(Arc::new(tools::GitStatusTool::new(ws.clone())))?;
-        registry.register(Arc::new(tools::GitDiffTool::new(ws.clone())))?;
-        registry.register(Arc::new(tools::GitCommitTool::new(ws.clone())))?;
-        registry.register(Arc::new(tools::GitLogTool::new(ws.clone())))?;
-        registry.register(Arc::new(tools::GitBranchTool::new(ws.clone())))?;
-        Ok(())
-    })();
+    let reg_res = tools::register_standard_tools(&registry, ws.clone());
 
     if let Err(e) = reg_res {
         let _ = sender.send(ChatAgentUpdate::Error(format!(

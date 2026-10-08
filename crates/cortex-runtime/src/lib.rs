@@ -22,7 +22,7 @@ pub mod workspace;
 pub use agent::{
     Agent, AgentContext, AgentLifecycleEvent, AgentLoop, AgentManager, AgentManifest,
     AgentModelConfig, AgentPermissions, AgentRunResult, AgentState, CancellationToken, ChatMessage,
-    CODING_AGENT_POLICY,
+    PermissionState, SessionMetadata, TodoItem, CODING_AGENT_POLICY,
 };
 pub use mcp::{CortexConfig, McpClient, McpConfig, McpManager, McpServerConfig, McpTool};
 pub use model::{
@@ -34,7 +34,7 @@ pub use providers::{
 };
 pub use sandbox::{Sandbox, SandboxMode};
 pub use storage::{RunStore, RunSummary};
-pub use tool::{validate_schema, Tool, ToolDefinition, ToolRegistry, ToolResult};
+pub use tool::{validate_schema, PermissionLevel, Tool, ToolDefinition, ToolRegistry, ToolResult};
 pub use workspace::Workspace;
 
 /// Current semantic version of the Cortex runtime crate.

@@ -929,12 +929,19 @@ fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let active_portal = app.active_portal();
+    let input_line_count = if app.chat_input.is_empty() {
+        1
+    } else {
+        app.chat_input.split('\n').count().max(1)
+    };
+    let input_box_height = ((input_line_count as u16) + 2).clamp(3, 8);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Clean Header with Terracotta brand accent
             Constraint::Min(8),    // Conversation & Execution Stream
-            Constraint::Length(3), // Signature Dashed ASCII Input Box
+            Constraint::Length(input_box_height), // Signature Dashed ASCII Input Box (dynamic)
             Constraint::Length(1), // Persistent Status Bar
         ])
         .split(area);
@@ -972,6 +979,19 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(theme::COLOR_MUTED)
     };
 
+    let tool_str = if app.tool_calls_expanded {
+        "Tools: Expanded (Ctrl+O)"
+    } else {
+        "Tools: Collapsed (Ctrl+O)"
+    };
+    let tool_style = if app.tool_calls_expanded {
+        Style::default()
+            .fg(theme::COLOR_SECONDARY)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme::COLOR_MUTED)
+    };
+
     let cwd = std::env::current_dir()
         .map(|p| {
             p.file_name()
@@ -980,7 +1000,7 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         })
         .unwrap_or_else(|_| "cortex".to_string());
 
-    let banner_text = Line::from(vec![
+    let mut banner_spans = vec![
         Span::styled(
             " ◈ Cortex Code ",
             Style::default()
@@ -1004,12 +1024,29 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
         Span::styled(cwd, Style::default().fg(theme::COLOR_MUTED)),
+    ];
+
+    if let Some(git_info) = &app.git_branch_info {
+        banner_spans.push(Span::styled(
+            " · ",
+            Style::default().fg(theme::COLOR_SUBTLE),
+        ));
+        banner_spans.push(Span::styled(
+            git_info,
+            Style::default().fg(theme::COLOR_CLAUDE_SHIMMER),
+        ));
+    }
+
+    banner_spans.extend(vec![
         Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
         Span::styled(status_str, status_style),
         Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
         Span::styled(thinking_str, thinking_style),
+        Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
+        Span::styled(tool_str, tool_style),
     ]);
-    let banner = Paragraph::new(banner_text).block(
+
+    let banner = Paragraph::new(Line::from(banner_spans)).block(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
@@ -1233,79 +1270,111 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                             .fg(theme::COLOR_PRIMARY)
                             .add_modifier(Modifier::BOLD),
                     )]));
-                    for line in msg.content.lines() {
-                        text_lines.push(Line::from(vec![
-                            Span::raw("    "),
-                            Span::styled(line, Style::default().fg(theme::COLOR_FG)),
-                        ]));
-                    }
+                    text_lines.extend(crate::markdown::render_markdown(&msg.content));
                     text_lines.push(Line::from(""));
                 }
                 ChatRole::Tool => {
-                    let is_diff = msg.content.contains("--- a/")
-                        || msg.content.contains("diff --git")
-                        || msg
-                            .content
-                            .lines()
-                            .any(|l| l.starts_with('+') || l.starts_with('-'));
-                    let tool_title = if is_diff {
-                        "Edit / Diff"
-                    } else if msg.content.to_lowercase().contains("shell")
-                        || msg.content.to_lowercase().contains("cargo")
-                        || msg.content.to_lowercase().contains("npm")
-                    {
-                        "Bash"
-                    } else {
-                        "Tool Output"
-                    };
-                    text_lines.push(Line::from(Span::styled(
-                        format!(
-                            "  ┌─ {} ────────────────────────────────────────────────────────",
-                            tool_title
-                        ),
-                        Style::default().fg(theme::COLOR_SECONDARY),
-                    )));
-                    for line in msg.content.lines() {
-                        let (prefix_span, line_span) = if line.starts_with('+')
-                            && !line.starts_with("+++")
-                        {
-                            (
-                                Span::styled("  │  ", Style::default().fg(theme::COLOR_SECONDARY)),
-                                Span::styled(
-                                    line,
-                                    Style::default()
-                                        .fg(theme::COLOR_SUCCESS)
-                                        .bg(theme::COLOR_DIFF_ADDED_BG),
-                                ),
-                            )
-                        } else if line.starts_with('-') && !line.starts_with("---") {
-                            (
-                                Span::styled("  │  ", Style::default().fg(theme::COLOR_SECONDARY)),
-                                Span::styled(
-                                    line,
-                                    Style::default()
-                                        .fg(theme::COLOR_ERROR)
-                                        .bg(theme::COLOR_DIFF_REMOVED_BG),
-                                ),
-                            )
+                    if !msg.is_expanded {
+                        let first_line = msg.content.lines().next().unwrap_or("Tool execution");
+                        let line_count = msg.content.lines().count();
+                        let preview = if first_line.len() > 65 {
+                            format!("{}...", &first_line[..62])
                         } else {
-                            (
-                                Span::styled("  │  ", Style::default().fg(theme::COLOR_SECONDARY)),
-                                Span::styled(
-                                    line,
-                                    Style::default()
-                                        .fg(theme::COLOR_FG)
-                                        .bg(theme::COLOR_TOOL_BG),
-                                ),
-                            )
+                            first_line.to_string()
                         };
-                        text_lines.push(Line::from(vec![prefix_span, line_span]));
+                        text_lines.push(Line::from(vec![
+                            Span::styled("  ▶ ", Style::default().fg(theme::COLOR_SECONDARY)),
+                            Span::styled(
+                                preview,
+                                Style::default()
+                                    .fg(theme::COLOR_FG)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                format!(" ({} lines) ", line_count),
+                                Style::default().fg(theme::COLOR_MUTED),
+                            ),
+                            Span::styled(
+                                "[Ctrl+O to expand]",
+                                Style::default().fg(theme::COLOR_MUTED),
+                            ),
+                        ]));
+                        text_lines.push(Line::from(""));
+                    } else {
+                        let is_diff = msg.content.contains("--- a/")
+                            || msg.content.contains("diff --git")
+                            || msg
+                                .content
+                                .lines()
+                                .any(|l| l.starts_with('+') || l.starts_with('-'));
+                        let tool_title = if is_diff {
+                            "Edit / Diff"
+                        } else if msg.content.to_lowercase().contains("shell")
+                            || msg.content.to_lowercase().contains("cargo")
+                            || msg.content.to_lowercase().contains("npm")
+                            || msg.content.to_lowercase().contains("bash")
+                        {
+                            "Bash"
+                        } else {
+                            "Tool Output"
+                        };
+                        text_lines.push(Line::from(Span::styled(
+                            format!(
+                                "  ┌─ ▼ {} (Ctrl+O to collapse) ────────────────────────────────────",
+                                tool_title
+                            ),
+                            Style::default().fg(theme::COLOR_SECONDARY),
+                        )));
+                        for line in msg.content.lines() {
+                            let (prefix_span, line_span) =
+                                if line.starts_with('+') && !line.starts_with("+++") {
+                                    (
+                                        Span::styled(
+                                            "  │  ",
+                                            Style::default().fg(theme::COLOR_SECONDARY),
+                                        ),
+                                        Span::styled(
+                                            line,
+                                            Style::default()
+                                                .fg(theme::COLOR_SUCCESS)
+                                                .bg(theme::COLOR_DIFF_ADDED_BG),
+                                        ),
+                                    )
+                                } else if line.starts_with('-') && !line.starts_with("---") {
+                                    (
+                                        Span::styled(
+                                            "  │  ",
+                                            Style::default().fg(theme::COLOR_SECONDARY),
+                                        ),
+                                        Span::styled(
+                                            line,
+                                            Style::default()
+                                                .fg(theme::COLOR_ERROR)
+                                                .bg(theme::COLOR_DIFF_REMOVED_BG),
+                                        ),
+                                    )
+                                } else {
+                                    (
+                                        Span::styled(
+                                            "  │  ",
+                                            Style::default().fg(theme::COLOR_SECONDARY),
+                                        ),
+                                        Span::styled(
+                                            line,
+                                            Style::default()
+                                                .fg(theme::COLOR_FG)
+                                                .bg(theme::COLOR_TOOL_BG),
+                                        ),
+                                    )
+                                };
+                            text_lines.push(Line::from(vec![prefix_span, line_span]));
+                        }
+                        text_lines.push(Line::from(Span::styled(
+                            "  └─────────────────────────────────────────────────────────────────────────────",
+                            Style::default().fg(theme::COLOR_SECONDARY),
+                        )));
+                        text_lines.push(Line::from(""));
                     }
-                    text_lines.push(Line::from(Span::styled(
-                        "  └─────────────────────────────────────────────────────────────────────────────",
-                        Style::default().fg(theme::COLOR_SECONDARY),
-                    )));
-                    text_lines.push(Line::from(""));
                 }
                 ChatRole::System => {
                     let is_perm = msg.content.to_lowercase().contains("allow")
@@ -1469,27 +1538,49 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let cursor_pos = app.chat_cursor.min(app.chat_input.len());
-    let before_cursor = &app.chat_input[..cursor_pos];
-    let after_cursor = &app.chat_input[cursor_pos..];
+    let raw_lines: Vec<&str> = if app.chat_input.is_empty() {
+        vec![""]
+    } else {
+        app.chat_input.split('\n').collect()
+    };
 
-    let input_line = Line::from(vec![
-        Span::styled(
-            " > ",
+    let mut rendered_input_lines: Vec<Line> = Vec::new();
+    let mut current_offset = 0;
+
+    for (i, line) in raw_lines.iter().enumerate() {
+        let line_len = line.len();
+        let line_start = current_offset;
+        let line_end = current_offset + line_len;
+
+        let prefix = if i == 0 { " > " } else { " ... " };
+        let mut spans = vec![Span::styled(
+            prefix,
             Style::default()
                 .fg(theme::COLOR_PRIMARY)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(before_cursor, Style::default().fg(theme::COLOR_FG)),
-        Span::styled(
-            "█",
-            Style::default()
-                .fg(theme::COLOR_PRIMARY)
-                .add_modifier(Modifier::RAPID_BLINK),
-        ),
-        Span::styled(after_cursor, Style::default().fg(theme::COLOR_FG)),
-    ]);
+        )];
 
-    let input_widget = Paragraph::new(input_line).block(
+        if cursor_pos >= line_start && (cursor_pos <= line_end || i == raw_lines.len() - 1) {
+            let col = (cursor_pos.saturating_sub(line_start)).min(line_len);
+            let before = &line[..col];
+            let after = &line[col..];
+            spans.push(Span::styled(before, Style::default().fg(theme::COLOR_FG)));
+            spans.push(Span::styled(
+                "█",
+                Style::default()
+                    .fg(theme::COLOR_PRIMARY)
+                    .add_modifier(Modifier::RAPID_BLINK),
+            ));
+            spans.push(Span::styled(after, Style::default().fg(theme::COLOR_FG)));
+        } else {
+            spans.push(Span::styled(*line, Style::default().fg(theme::COLOR_FG)));
+        }
+
+        rendered_input_lines.push(Line::from(spans));
+        current_offset += line_len + 1; // +1 for the '\n' delimiter
+    }
+
+    let input_widget = Paragraph::new(rendered_input_lines).block(
         Block::default()
             .borders(Borders::ALL)
             .border_set(theme::DASHED_INPUT_SET)

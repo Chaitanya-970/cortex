@@ -357,17 +357,9 @@ fn execute_run(
 
     let ws = Arc::new(Workspace::new(&ws_path)?);
 
-    // Build tool registry with all workspace-confined tools
+    // Build tool registry with standard agent tools (filesystem, search, shell, git)
     let registry = ToolRegistry::new();
-    registry.register(Arc::new(tools::ReadFileTool::new(ws.clone())))?;
-    registry.register(Arc::new(tools::WriteFileTool::new(ws.clone())))?;
-    registry.register(Arc::new(tools::ListDirTool::new(ws.clone())))?;
-    registry.register(Arc::new(tools::ShellTool::new(ws.clone())))?;
-    registry.register(Arc::new(tools::GitStatusTool::new(ws.clone())))?;
-    registry.register(Arc::new(tools::GitDiffTool::new(ws.clone())))?;
-    registry.register(Arc::new(tools::GitCommitTool::new(ws.clone())))?;
-    registry.register(Arc::new(tools::GitLogTool::new(ws.clone())))?;
-    registry.register(Arc::new(tools::GitBranchTool::new(ws.clone())))?;
+    tools::register_standard_tools(&registry, ws.clone())?;
 
     // Load MCP configuration and register external tools if available
     let config_file = config.or_else(|| {

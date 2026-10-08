@@ -5,7 +5,8 @@ pub mod lifecycle;
 pub mod manager;
 
 pub use execution::{
-    AgentContext, AgentLoop, AgentRunResult, CancellationToken, ChatMessage, CODING_AGENT_POLICY,
+    AgentContext, AgentLoop, AgentRunResult, CancellationToken, ChatMessage, PermissionState,
+    SessionMetadata, TodoItem, CODING_AGENT_POLICY,
 };
 pub use lifecycle::{AgentLifecycleEvent, AgentState};
 pub use manager::{Agent, AgentManager, AgentManifest, AgentModelConfig, AgentPermissions};

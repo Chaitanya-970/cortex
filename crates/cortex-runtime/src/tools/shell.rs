@@ -39,57 +39,144 @@ impl Tool for ShellTool {
     }
 
     fn execute(&self, input: &serde_json::Value) -> Result<ToolResult> {
-        let command_str = input["command"].as_str().ok_or_else(|| {
-            CortexError::Validation("missing required 'command' parameter".to_string())
-        })?;
+        execute_shell_command(&self.workspace, input)
+    }
+}
 
-        let mut cmd = if cfg!(target_os = "windows") {
-            let mut c = Command::new("cmd");
-            c.args(["/C", command_str]);
-            c
-        } else {
-            let mut c = Command::new("sh");
-            c.args(["-c", command_str]);
-            c
-        };
+/// Helper function to execute shell command within workspace bounds.
+fn execute_shell_command(workspace: &Workspace, input: &serde_json::Value) -> Result<ToolResult> {
+    let command_str = input["command"].as_str().ok_or_else(|| {
+        CortexError::Validation("missing required 'command' parameter".to_string())
+    })?;
 
-        // Pin working directory to workspace root
-        cmd.current_dir(self.workspace.root());
+    let workdir = if let Some(sub) = input.get("working_dir").and_then(|w| w.as_str()) {
+        workspace.resolve_path(sub)?
+    } else {
+        workspace.root().to_path_buf()
+    };
 
-        // Scrub sensitive host environment variables
-        cmd.env_remove("AWS_SECRET_ACCESS_KEY");
-        cmd.env_remove("OPENAI_API_KEY");
-        cmd.env_remove("ANTHROPIC_API_KEY");
-        cmd.env_remove("GITHUB_TOKEN");
-        cmd.env_remove("GH_TOKEN");
+    let mut cmd = if cfg!(target_os = "windows") {
+        let mut c = Command::new("cmd");
+        c.args(["/C", command_str]);
+        c
+    } else {
+        let mut c = Command::new("sh");
+        c.args(["-c", command_str]);
+        c
+    };
 
-        let output = cmd.output().map_err(|e| {
-            CortexError::Internal(format!(
-                "failed to execute command '{}': {}",
-                command_str, e
-            ))
-        })?;
+    // Pin working directory to workspace bounds
+    cmd.current_dir(workdir);
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    // Scrub sensitive host environment variables
+    cmd.env_remove("AWS_SECRET_ACCESS_KEY");
+    cmd.env_remove("OPENAI_API_KEY");
+    cmd.env_remove("ANTHROPIC_API_KEY");
+    cmd.env_remove("GITHUB_TOKEN");
+    cmd.env_remove("GH_TOKEN");
 
-        let combined = if stderr.is_empty() {
-            stdout.to_string()
-        } else if stdout.is_empty() {
-            stderr.to_string()
-        } else {
-            format!("{}\n{}", stdout, stderr)
-        };
+    let output = cmd.output().map_err(|e| {
+        CortexError::Internal(format!(
+            "failed to execute command '{}': {}",
+            command_str, e
+        ))
+    })?;
 
-        if output.status.success() {
-            Ok(ToolResult::success(combined))
-        } else {
-            let exit_code = output.status.code().unwrap_or(-1);
-            Ok(ToolResult::error(format!(
-                "Command exited with code {}:\n{}",
-                exit_code, combined
-            )))
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    let combined = if stderr.is_empty() {
+        stdout.to_string()
+    } else if stdout.is_empty() {
+        stderr.to_string()
+    } else {
+        format!("{}\n{}", stdout, stderr)
+    };
+
+    if output.status.success() {
+        Ok(ToolResult::success(combined))
+    } else {
+        let exit_code = output.status.code().unwrap_or(-1);
+        Ok(ToolResult::error(format!(
+            "Command exited with code {}:\n{}",
+            exit_code, combined
+        )))
+    }
+}
+
+/// Tool for executing bash commands (Claude Code standard tool 'bash').
+pub struct BashTool {
+    workspace: Arc<Workspace>,
+    def: ToolDefinition,
+}
+
+impl BashTool {
+    /// Create a new [`BashTool`].
+    pub fn new(workspace: Arc<Workspace>) -> Self {
+        Self {
+            workspace,
+            def: ToolDefinition::new(
+                "bash",
+                "Executes a bash command within the workspace boundary and returns stdout/stderr",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string" },
+                        "working_dir": { "type": "string" }
+                    },
+                    "required": ["command"]
+                }),
+            )
+            .with_permission(crate::tool::PermissionLevel::Execute),
         }
+    }
+}
+
+impl Tool for BashTool {
+    fn definition(&self) -> &ToolDefinition {
+        &self.def
+    }
+
+    fn execute(&self, input: &serde_json::Value) -> Result<ToolResult> {
+        execute_shell_command(&self.workspace, input)
+    }
+}
+
+/// Tool for executing CLI commands ('execute_command').
+pub struct ExecuteCommandTool {
+    workspace: Arc<Workspace>,
+    def: ToolDefinition,
+}
+
+impl ExecuteCommandTool {
+    /// Create a new [`ExecuteCommandTool`].
+    pub fn new(workspace: Arc<Workspace>) -> Self {
+        Self {
+            workspace,
+            def: ToolDefinition::new(
+                "execute_command",
+                "Executes a CLI command within workspace bounds",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string" },
+                        "working_dir": { "type": "string" }
+                    },
+                    "required": ["command"]
+                }),
+            )
+            .with_permission(crate::tool::PermissionLevel::Execute),
+        }
+    }
+}
+
+impl Tool for ExecuteCommandTool {
+    fn definition(&self) -> &ToolDefinition {
+        &self.def
+    }
+
+    fn execute(&self, input: &serde_json::Value) -> Result<ToolResult> {
+        execute_shell_command(&self.workspace, input)
     }
 }
 

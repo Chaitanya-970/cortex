@@ -590,20 +590,35 @@ fn format_agents_visualization(app: &App) -> String {
 }
 
 fn handle_tools_command() -> String {
-    r#"┌── Registered Tool Capabilities & Permissions ───────────────────────────┐
-│ • read_file   : Read file contents (workspace boundary confined)         │
-│ • write_file  : Create or overwrite files (workspace boundary confined)  │
-│ • list_dir    : Inspect directory entries (path traversal blocked)       │
-│ • shell       : Sandboxed subprocess execution (timeout & signal guard)  │
-│ • git_status  : Working tree status query                                │
-│ • git_diff    : Inspect uncommitted line modifications                   │
-│ • git_commit  : Structured atomic commit authoring                       │
-│ • git_log     : Read revision commit history                             │
-│ • git_branch  : Inspect active repository branches                       │
-├──────────────────────────────────────────────────────────────────────────┤
-│ Security Boundary: All file access is strictly confined within workspace │
-│ Directory traversal attempts ('../') outside workspace root are blocked. │
-└──────────────────────────────────────────────────────────────────────────┘"#
+    r#"┌── 🛠 Registered Tool Capabilities & Permissions ─────────────────────────┐
+│ [FILE TOOLS]                                                              │
+│ • read_file       : Read file contents (workspace boundary confined)      │
+│ • write_file      : Create or overwrite files in workspace               │
+│ • edit_file       : Exact replacement & diff patching in workspace files  │
+│ • delete_file     : Safely remove files within workspace bounds           │
+│ • list_directory  : Inspect directory entries (path traversal blocked)    │
+│                                                                           │
+│ [SEARCH TOOLS]                                                            │
+│ • grep            : Search text patterns / regex across files in workspace│
+│ • glob            : Match files by pattern (e.g. '**/*.rs')               │
+│ • find            : Find files or directories by name substring           │
+│ • search_code     : Code symbol & declaration search with context         │
+│                                                                           │
+│ [SHELL TOOLS]                                                             │
+│ • bash            : Sandboxed bash execution (timeout & env guard)        │
+│ • execute_command : Direct command execution in workspace boundary        │
+│ • shell           : Cross-platform command runner                         │
+│                                                                           │
+│ [GIT TOOLS]                                                               │
+│ • git_status      : Working tree status query                             │
+│ • git_diff        : Inspect uncommitted line modifications                │
+│ • git_log         : Read revision commit history                          │
+│ • git_branch      : Inspect and switch repository branches                │
+│ • git_commit      : Structured atomic commit authoring                    │
+├───────────────────────────────────────────────────────────────────────────┤
+│ Security: ReadOnly operations execute freely. Write/Execute tools adhere  │
+│ to workspace boundary containment and permission policies.                │
+└───────────────────────────────────────────────────────────────────────────┘"#
         .to_string()
 }
 
