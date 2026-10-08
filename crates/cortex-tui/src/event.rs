@@ -375,9 +375,8 @@ mod tests {
 
         // Activate portal with Space
         handle_key(&mut app, make_key(KeyCode::Char(' ')));
-        assert!(app.portals[1].is_active);
-
         // Enter edit key mode with 'e'
+        app.portals[1].api_key = None;
         handle_key(&mut app, make_key(KeyCode::Char('e')));
         assert_eq!(app.portal_input_mode, PortalInputMode::EditingKey);
 

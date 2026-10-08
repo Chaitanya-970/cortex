@@ -995,7 +995,7 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         ));
     } else {
         header_spans.push(Span::styled(
-            "● Ready",
+            "✦ Ready",
             Style::default().fg(theme::COLOR_SUCCESS),
         ));
     }
@@ -1015,7 +1015,7 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         text_lines.push(Line::from(""));
         text_lines.push(Line::from(vec![
             Span::styled(
-                "  ◈ Cortex Code",
+                "  ✦ Cortex Code",
                 Style::default()
                     .fg(theme::COLOR_PRIMARY)
                     .add_modifier(Modifier::BOLD),
@@ -1046,7 +1046,7 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 ChatRole::User => {
                     text_lines.push(Line::from(vec![
                         Span::styled(
-                            "> ",
+                            theme::prompt_glyph(),
                             Style::default()
                                 .fg(theme::COLOR_PRIMARY)
                                 .add_modifier(Modifier::BOLD),
@@ -1231,7 +1231,7 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         let line_start = current_offset;
         let line_end = current_offset + line_len;
 
-        let prefix = if i == 0 { "> " } else { "  " };
+        let prefix = if i == 0 { theme::prompt_glyph() } else { "  " };
         let mut spans = vec![Span::styled(
             prefix,
             Style::default()

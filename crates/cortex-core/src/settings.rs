@@ -72,6 +72,10 @@ pub struct UserSettings {
     #[serde(default)]
     pub system_prompt: Option<String>,
 
+    /// Active UI theme (e.g. "gemini", "claude"). Defaults to "gemini".
+    #[serde(default)]
+    pub theme: Option<String>,
+
     /// Whether to automatically persist chat sessions to `~/.cortex/sessions/`.
     #[serde(default = "default_true")]
     pub auto_save_sessions: bool,
@@ -98,6 +102,7 @@ impl Default for UserSettings {
             temperature: None,
             max_iterations: default_max_iterations(),
             system_prompt: None,
+            theme: Some("gemini".to_string()),
             auto_save_sessions: true,
         }
     }
@@ -152,6 +157,7 @@ pub fn default_settings_json() -> String {
   "ollama_base_url": null,
   "temperature": null,
   "max_iterations": 25,
+  "theme": "gemini",
   "auto_save_sessions": true
 }
 "#
@@ -278,9 +284,31 @@ impl UserSettings {
             self.ollama_base_url
                 .clone()
                 .filter(|s| !s.trim().is_empty())
-                .or_else(|| self.base_url.clone().filter(|s| !s.trim().is_empty()))
+        } else if let Some(url) = &self.base_url {
+            let u = url.trim();
+            if u.is_empty() {
+                return None;
+            }
+            if u.contains("generativelanguage.googleapis.com") {
+                if lower.contains("gemini")
+                    || lower.contains("gemma")
+                    || self.model.eq_ignore_ascii_case(model)
+                {
+                    Some(u.to_string())
+                } else {
+                    None
+                }
+            } else if u.contains("deepseek") {
+                if lower.contains("deepseek") || self.model.eq_ignore_ascii_case(model) {
+                    Some(u.to_string())
+                } else {
+                    None
+                }
+            } else {
+                Some(u.to_string())
+            }
         } else {
-            self.base_url.clone().filter(|s| !s.trim().is_empty())
+            None
         }
     }
 }

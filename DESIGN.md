@@ -1,314 +1,149 @@
-# Claude Code — TUI Design System
+# Gemini CLI — TUI Design System
 
-> The AI coding agent that lives in your terminal. Based on [Claude Code](https://claude.ai/claude-code) by Anthropic — warm, playful, and content-forward with a signature terracotta accent.
+> The next-generation AI coding agent terminal experience. Inspired by [Google Gemini CLI](https://gemini.google.com) and Google AI Studio — sleek, high-velocity, and information-dense with signature Gemini Electric Blue, Sparkle Violet, and Sky Cyan accents.
 
 ## 1. Theme Overview
 
-- **Mood**: Warm, playful, content-forward
-- **Density**: Balanced — clean conversation flow, minimal chrome
-- **Target**: AI coding agents, conversational terminal interfaces, developer tools
-- **Terminal**: TrueColor recommended for shimmer effects, 256-color acceptable
+- **Mood**: High-velocity, sleek, futuristic, minimalist developer console
+- **Density**: Compact — clean conversation stream, borderless flow, zero wasted chrome
+- **Target**: Autonomous AI coding workers, terminal agent harnesses, Google Gemini developer workflows
+- **Terminal**: TrueColor recommended for Gemini gradient shimmer (`#4285f4` ↔ `#a855f7`), 256-color fallback supported
 
 ## 2. Color Palette
 
-### Semantic Roles
+### Semantic Roles (Gemini CLI Theme)
 
 | Role | Hex | ANSI 256 | ANSI 16 | Usage |
 |------|-----|----------|---------|-------|
-| Background | `#1a1a1a` | `234` | `black` | Terminal default dark bg |
-| Foreground | `#ffffff` | `15` | `bright white` | Default text, AI responses |
-| Primary | `#d77757` | `173` | `yellow` | Terracotta — Anthropic brand accent |
-| Secondary | `#fd5db1` | `206` | `bright magenta` | Hot pink — bash/tool borders |
-| Accent | `#b1b9f9` | `147` | `bright blue` | Lavender — permission dialogs |
-| Success | `#4eba65` | `71` | `green` | Green — completion |
-| Warning | `#ffc107` | `220` | `yellow` | Amber/gold — caution |
-| Error | `#ff6b80` | `204` | `red` | Soft red-pink — errors |
-| Muted | `#888888` | `245` | `bright black` | Gray — input borders, inactive |
-| Surface | `#373737` | `237` | `black` | User message background |
+| Background | `#10141d` | `234` | `black` | Deep midnight navy background |
+| Foreground | `#ffffff` | `15` | `bright white` | Clean white text, AI responses |
+| Primary | `#4285f4` | `75` | `bright blue` | Gemini Electric Blue — Google brand accent & prompt |
+| Secondary | `#a855f7` | `135` | `bright magenta` | Gemini Sparkle Violet — secondary accents & tool borders |
+| Accent | `#38bdf8` | `81` | `bright cyan` | Sky Cyan — paths, code diff highlights, tool calls |
+| Success | `#34a853` | `71` | `green` | Google Green — completion / test passes |
+| Warning | `#fbbc04` | `220` | `yellow` | Google Amber / Gold — caution |
+| Error | `#ea4335` | `203` | `red` | Google Coral Red — errors & failures |
+| Muted | `#94a3b8` | `246` | `bright black` | Slate gray — metadata, inactive elements |
+| Subtle | `#334155` | `237` | `black` | Deep slate — separators |
+| Surface | `#1e293b` | `236` | `black` | Elevated card background |
 
-### Claude-Specific Colors
+### Gemini Gradient Shimmer
+
+The thinking indicator and interactive elements shimmer smoothly along the signature Gemini gradient:
+
+$$\text{Electric Blue (\#4285f4)} \longleftrightarrow \text{Sky Cyan (\#38bdf8)} \longleftrightarrow \text{Sparkle Violet (\#a855f7)} \longleftrightarrow \text{Soft Blue (\#8ab4f8)}$$
+
+### Diff Colors
 
 | Name | Hex | Usage |
 |------|-----|-------|
-| Claude shimmer | `#eb9f7f` | Lighter terracotta for shimmer animation |
-| Bash border | `#fd5db1` | Hot pink tool execution borders |
-| Permission | `#b1b9f9` | Lavender-blue permission dialogs |
-| Auto-accept | `#af87ff` | Purple — YOLO/auto-accept mode |
-| Inactive | `#999999` | Gray — disabled elements |
-| Subtle | `#505050` | Dark gray — separators |
-| Diff added bg | `#225c2b` | Green tint for added lines |
-| Diff removed bg | `#7a2936` | Red tint for removed lines |
+| Diff added bg | `#14532d` | Forest green tint for added lines |
+| Diff removed bg | `#7f1d1d` | Dark red tint for removed lines |
+
+---
 
 ## 3. Typography & ASCII Art
 
-- **Header font**: None — Claude Code doesn't use figlet; clean text only
-- **Body text**: plain terminal font, monospaced
-- **Emphasis**: `bold` for headers, `dim` for metadata
-- **Code/values**: syntax-highlighted in response
+- **Clean Typography**: Clean, crisp monospaced terminal typography
+- **Prompt Glyph**: `✦ ` (Gemini 4-point sparkle star)
+- **Readiness Badge**: `✦ Ready` in Google Green (`#34a853`)
+- **Headers & Emphases**: Bold Gemini Electric Blue (`#4285f4`)
 
 ### Text Hierarchy
 
 | Level | Style | Example Usage |
 |-------|-------|---------------|
-| H1 | BOLD + Primary (terracotta) | Session header |
-| Body | Foreground (white) | AI response text |
-| Code | Syntax highlighted | Code blocks |
-| User input | `>` prefix on Surface bg | User messages |
-| Caption | Muted + dim | Token counts, timestamps |
-| Thinking | Primary (terracotta) + shimmer | Thinking verb |
+| H1 | BOLD + Primary (Gemini Blue `#4285f4`) | Welcome header (`✦ Cortex Code`) |
+| Body | Foreground (`#ffffff`) | AI response text |
+| Code | Syntax highlighted with Sky Cyan (`#38bdf8`) & Violet (`#a855f7`) | Code blocks |
+| User input | `✦ ` prefix in Gemini Blue | User messages |
+| Caption | Muted slate (`#94a3b8`) | Token counts, timestamps, files indexed |
+| Thinking | Shimmering Gemini Gradient (`#4285f4` ↔ `#a855f7`) | Reasoning indicator |
+
+---
 
 ## 4. Borders & Box Drawing
 
-### Input Box (Dashed ASCII — Signature Style)
+### Tool Call Block (Gemini Cyan & Violet)
 
-```
-- - - - - - - - - - - - - - - -
-| > your message here_          |
-- - - - - - - - - - - - - - - -
-```
-
-**No Unicode box-drawing for input** — plain ASCII dashed lines (`-` horizontal, `|` vertical). Border is Muted gray with shimmer between `#888` and `#A6A6A6`. This is a deliberate design choice — casual, not corporate.
-
-### Tool Call Border (Hot Pink)
-
-```
-┌─ Bash ─────────────────────────┐
-│ $ npm test                      │
-│                                 │
-│ PASS  src/app.test.ts           │
-│   ✓ handles input (12ms)       │
-└─────────────────────────────────┘
+```text
+┌─ Read: src/config.ts ─────────────────┐
+│                                         │
+│  1 │ export function parseConfig() {    │
+│  2 │   const raw = readFileSync(path);  │
+│  3 │   return JSON.parse(raw);          │
+│                                         │
+└─────────────────────────────────────────┘
 ```
 
-Tool/bash output uses box-drawing with hot pink (`#fd5db1`) borders.
+- Rounded or thin single-line box-drawing with Gemini Sky Cyan (`#38bdf8`) or Sparkle Violet (`#a855f7`) borders
+- Background fill: Midnight Slate (`#18202f`)
 
-### Permission Dialog (Lavender)
+### Autocomplete Menu (Gemini Accent)
 
-```
-┌─ Allow Edit to src/app.ts? ────┐
-│                                 │
-│  [Y]es  [N]o  [A]lways         │
-│                                 │
-└─────────────────────────────────┘
-```
-
-Permission prompts use lavender (`#b1b9f9`) borders.
-
-### Parts Table
-
-| Part | Character | Color | Usage |
-|------|-----------|-------|-------|
-| Input horizontal | `-` (dashed) | Muted gray | Input box |
-| Input vertical | `\|` | Muted gray | Input box sides |
-| Tool top_left | `┌` | Hot pink | Tool call blocks |
-| Tool horizontal | `─` | Hot pink | Tool call blocks |
-| Tool vertical | `│` | Hot pink | Tool call blocks |
-| Tool bottom_left | `└` | Hot pink | Tool call blocks |
-| Permission border | `┌─┐│└─┘` | Lavender | Permission dialogs |
-
-### Dividers
-
-- Between messages: subtle thin line in `#505050`
-- No heavy separators — content flows naturally
-
-## 5. Components
-
-### User Prompt
-
-```
-- - - - - - - - - - - - - - - - -
-|  > What does this function do?  |
-- - - - - - - - - - - - - - - - -
+```text
+┌── Slash Commands ──────────────────────────────────────────┐
+│  /model       Select or configure AI model                 │
+│  /settings    Configure ~/.cortex/settings.json            │
+│  /status      Show workspace and runtime status            │
+└────────────────────────────────────────────────────────────┘
 ```
 
-- Dashed ASCII border in Muted gray (shimmering)
-- `>` prefix
-- Background: Surface (`#373737`)
+- Border: Gemini Blue (`#4285f4`)
+- Highlight: Inverted Electric Blue background with crisp white text
 
-### Thinking Indicator (Signature Feature)
+---
 
-```
-  ✳ Percolating...
-```
+## 5. Components & Glyphs
 
-- Spinner cycles through 6 symbols: `· ✢ ✳ ✶ ✻ ✽` then reverses
-- 120ms interval per frame
-- Rendered in Primary terracotta with shimmer to `#eb9f7f`
-- Paired with a random whimsical verb from ~184 options:
-  "Cogitating...", "Percolating...", "Shenaniganing...", "Moonwalking...", "Ruminating..."
+### Prompt & Input Line
 
-### AI Response
-
-```
-  This function parses the configuration file and returns
-  a structured object. Here's what each part does:
-
-  ...
+```text
+✦ fix the authentication bug
 ```
 
-- White text on terminal default background
-- Markdown rendered with syntax highlighting
-- No border, no prefix — clean content-forward
+- Signature `✦ ` prefix in Gemini Electric Blue (`#4285f4`)
+- Dynamic multi-line height for multi-line entries (`Alt+Enter` or trailing `\ + Enter`)
 
-### Tool Call Block
+### Thinking & Reasoning Indicator
 
-```
-  ┌─ Read: src/config.ts ─────────────────┐
-  │                                         │
-  │  1 │ export function parseConfig() {    │
-  │  2 │   const raw = readFileSync(path);  │
-  │  3 │   return JSON.parse(raw);          │
-  │                                         │
-  └─────────────────────────────────────────┘
+```text
+✦ Reasoning... (Ctrl+C to cancel)
 ```
 
-- Hot pink (`#fd5db1`) border — visually distinct from text
-- Tool name and file path in border header
-- Code with syntax highlighting inside
-- Background: `rgb(65,60,65)` for bash output
+- Spinner cycles through the signature Gemini sparkle sequence:
+  ```text
+  ✦ → ✧ → ⟡ → ❖ → ⟡ → ✧ → ✦ ...
+  ```
+- Shimmer colors oscillate through the Gemini gradient (`#4285f4` ↔ `#38bdf8` ↔ `#a855f7`)
+- Paired with analytical reasoning verbs:
+  "Reasoning...", "Synthesizing...", "Analyzing...", "Formulating...", "Contextualizing...", "Optimizing..."
 
-### Diff View
+### Compact Tool Executions
 
-```
-  ┌─ Edit: src/app.ts ─────────────────────┐
-  │                                         │
-  │  - const old = getValue();              │
-  │  + const result = getNewValue();        │
-  │  + logger.info('Updated');              │
-  │                                         │
-  └─────────────────────────────────────────┘
-```
+```text
+  grep "authenticate" src/
+  ✓ 6 matches
 
-- Added lines: `+` prefix, `#225c2b` background tint
-- Removed lines: `-` prefix, `#7a2936` background tint
-- Hot pink border (same as tool calls)
+  Reading src/auth.ts
+  ✓ 87 lines
 
-### Permission Prompt
+  ✎ src/auth.ts
+  ✓ updated
 
-```
-  ┌─ Allow Bash: npm test? ──────────────┐
-  │                                       │
-  │  [Y]es  [N]o  [A]lways               │
-  │                                       │
-  └───────────────────────────────────────┘
+  $ cargo test
+  ✓ Tests passed
 ```
 
-- Lavender (`#b1b9f9`) border
-- Options with key highlighted in bold
+- Tool commands: Sky Cyan (`#38bdf8`) and Gemini Blue (`#4285f4`)
+- Success checks: Google Green `✓` (`#34a853`)
 
-### Status Bar (Bottom)
+---
 
-```
-  Opus · 12.4K tokens · $0.04 · 3.2s · normal
-```
+## 6. Alternate Themes: Claude Code
 
-- Persistent bottom line
-- Token count, cost, elapsed time, effort level
-- Muted color
-
-### Subagent Indicators
-
-Each subagent gets a unique color from a palette:
-red, blue, green, yellow, purple, orange, pink, cyan
-
-## 6. Layout & Spacing
-
-- **Min terminal width**: `80`
-- **Ideal terminal width**: `120`
-- **Padding inside tool blocks**: 1 line top/bottom, 1 char left/right
-- **Gap between messages**: 1 line with subtle separator
-- **Indent level**: 2 spaces
-
-### Alignment Principles
-
-- Left-align all conversation content
-- Tool call blocks are indented slightly
-- Status bar persistent at bottom
-- No centering except startup logo
-- Conversation flows top-to-bottom
-
-## 7. Icons & Indicators
-
-| Purpose | Icon | Fallback (ASCII) |
-|---------|------|-------------------|
-| Success | `✓` | `+` |
-| Error | `✗` | `x` |
-| Warning | `⚠` | `!` |
-| Thinking | `· ✢ ✳ ✶ ✻ ✽` | `*` |
-| Prompt | `>` | `>` |
-| Running | `▸` | `>` |
-| Bullet | `•` | `-` |
-
-## 8. Animation & Motion
-
-### Thinking Spinner (Signature)
-
-```
-Frames: · → ✢ → ✳ → ✶ → ✻ → ✽ → ✻ → ✶ → ✳ → ✢ → · ...
-```
-
-- 120ms per frame
-- Primary terracotta color with shimmer to lighter terracotta
-- Reverse-mirror cycle (goes up then back down)
-- Random whimsical verb: "Cogitating...", "Percolating...", "Moonwalking..."
-
-### Input Border Shimmer
-
-- Dashed input border shimmers between `#888888` and `#A6A6A6`
-- Subtle, gentle animation
-
-### Transitions
-
-- No animated transitions between states
-- Streaming text appears as received from API
-- Tool blocks appear with distinct hot pink border
-
-### Progress
-
-- Counter-based: "Reading files... (3/12)"
-- No progress bars
-- Spinner + verb for indeterminate waits
-
-## 9. Agent Prompt Guide
-
-### Quick Reference
-
-```
-Background: terminal default (dark)
-Foreground: #ffffff  (white)
-Terracotta: #d77757  (brand primary — thinking, accents)
-Hot pink:   #fd5db1  (tool/bash call borders)
-Lavender:   #b1b9f9  (permission dialogs)
-Green:      #4eba65  (success)
-Red-pink:   #ff6b80  (errors)
-Amber:      #ffc107  (warnings)
-Purple:     #af87ff  (auto-accept mode)
-Gray:       #888888  (input borders, muted)
-Input:      - - | -  (dashed ASCII, NOT Unicode box-drawing)
-Tool:       ┌─┐│└─┘  (single line, hot pink)
-Style:      warm terracotta accent, dashed input, hot pink tools, whimsical thinking verbs
-```
-
-### Example Prompts
-
-- "Build an AI chat CLI: Claude Code style, dashed ASCII input border, hot pink bordered tool call blocks, terracotta thinking spinner with random verbs, white response text"
-- "Create a coding agent TUI: warm terracotta accent, lavender permission dialogs, hot pink for tool execution, whimsical spinner (· ✢ ✳ ✶ ✻ ✽), status bar with token count"
-- "Design a conversational CLI: Claude Code aesthetic, minimal chrome, dashed input box, colored tool borders (pink=bash, lavender=permission), shimmer animations"
-
-## Do's and Don'ts
-
-### Do
-
-- Use terracotta (`#d77757`) as the primary brand accent — it's warm and distinctive
-- Use dashed ASCII borders for input — NOT Unicode box-drawing (this is deliberate)
-- Use hot pink for tool call borders — makes them visually pop
-- Use whimsical, playful language for loading states
-- Keep response text pure white — readability is paramount
-
-### Don't
-
-- Don't use cold/corporate blues as primary accent — Claude Code is warm
-- Don't use Unicode box-drawing for the input area — dashed ASCII is the signature
-- Don't over-border — most content should flow without frames
-- Don't use generic "Loading..." — the random verbs are part of the personality
-- Don't colorize AI response body text — white for trust and readability
+Cortex also maintains support for the classic **Claude Code** theme via `"theme": "claude"` in `~/.cortex/settings.json`:
+- Primary: Terracotta (`#d77757`)
+- Secondary: Hot Pink (`#fd5db1`)
+- Permission: Lavender (`#b1b9f9`)
+- Spinner: Reverse-mirror `· ✢ ✳ ✶ ✻ ✽`
