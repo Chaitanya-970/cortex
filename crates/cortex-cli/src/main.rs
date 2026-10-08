@@ -176,10 +176,7 @@ fn default_db_path() -> PathBuf {
     if let Ok(env_path) = std::env::var("CORTEX_DB_PATH") {
         return PathBuf::from(env_path);
     }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".cortex").join("cortex.db");
-    }
-    PathBuf::from(".cortex").join("cortex.db")
+    cortex_core::settings::cortex_home_dir().join("cortex.db")
 }
 
 fn list_runs(store: &RunStore, limit: usize) -> Result<(), Box<dyn std::error::Error>> {
@@ -409,6 +406,7 @@ fn execute_run(
             model
         );
         eprintln!("\nTo configure authentication for this model provider:");
+        eprintln!("  • Via settings:    Configure 'api_key' in ~/.cortex/settings.json");
         eprintln!("  • Via environment: export OPENAI_API_KEY=\"sk-...\"       # OpenAI / DeepSeek / Groq");
         eprintln!(
             "                     export ANTHROPIC_API_KEY=\"sk-ant-...\" # Anthropic Claude"
@@ -679,19 +677,48 @@ fn mcp_test(
 }
 
 fn main() {
+    let settings = cortex_core::settings::UserSettings::load_or_create().unwrap_or_default();
     let cli = Cli::parse();
 
     match cli.command {
         Some(Commands::Status) => {
             println!("Cortex Agent Runtime v{}", VERSION);
             println!("Status: Workspace & Architecture Bootstrap");
+            let settings_file = cortex_core::settings::settings_path();
+            println!(
+                "Settings: {} (model: {})",
+                settings_file.display(),
+                settings.model
+            );
+            if let Some(url) = &settings.base_url {
+                println!("Base URL: {}", url);
+            }
+            let key_status = if settings.api_key.is_some()
+                || settings.openai_api_key.is_some()
+                || settings.anthropic_api_key.is_some()
+            {
+                "Configured"
+            } else {
+                "Not set"
+            };
+            println!("API Key: {}", key_status);
             println!("Core Interfaces: Loaded (cortex-core, cortex-runtime)");
+            println!("Database: {}", default_db_path().display());
             println!("Planned Features: See docs/roadmap.md for upcoming milestones");
         }
         Some(Commands::Check) => {
             println!("Cortex v{} environment check:", VERSION);
             println!("  [✓] Workspace crates initialized");
             println!("  [✓] Architecture traits defined");
+            let settings_file = cortex_core::settings::settings_path();
+            if settings_file.is_file() {
+                println!(
+                    "  [✓] User settings loaded from {}",
+                    settings_file.display()
+                );
+            } else {
+                println!("  [!] User settings missing at {}", settings_file.display());
+            }
             println!("  [✓] Ready for runtime development");
         }
         Some(Commands::Run {
@@ -706,13 +733,26 @@ fn main() {
             json,
             config,
         }) => {
+            let effective_model = if model == "gpt-4o-mini" && settings.model != "gpt-4o-mini" {
+                settings.model.clone()
+            } else {
+                model
+            };
+            let effective_api_key = api_key.or_else(|| settings.resolve_api_key(&effective_model));
+            let effective_base_url =
+                base_url.or_else(|| settings.resolve_base_url(&effective_model));
+            let effective_max_iter = if max_iterations == 15 && settings.max_iterations != 15 {
+                settings.max_iterations
+            } else {
+                max_iterations
+            };
             if let Err(e) = execute_run(
                 &prompt,
-                &model,
-                api_key,
-                base_url,
+                &effective_model,
+                effective_api_key,
+                effective_base_url,
                 workspace,
-                max_iterations,
+                effective_max_iter,
                 db,
                 quiet,
                 json,
@@ -792,8 +832,17 @@ fn main() {
             }
         }
         None => {
-            println!("Cortex Agent Runtime v{}", VERSION);
-            println!("Run 'cortex --help' for usage instructions.");
+            use std::io::IsTerminal;
+            if std::io::stdin().is_terminal() {
+                let db_path = default_db_path();
+                if let Err(e) = cortex_tui::run_tui(&db_path) {
+                    eprintln!("Error running interactive agent: {}", e);
+                    std::process::exit(1);
+                }
+            } else {
+                println!("Cortex Agent Runtime v{}", VERSION);
+                println!("Run 'cortex --help' or 'agent --help' for usage instructions.");
+            }
         }
     }
 }

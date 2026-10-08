@@ -236,12 +236,22 @@ pub struct AgentRunResult {
     pub estimated_cost_usd: f64,
 }
 
+/// Callback invoked when an incremental streaming token is received.
+pub type TokenCallback = Arc<dyn Fn(&str) + Send + Sync>;
+/// Callback invoked when a tool invocation begins.
+pub type ToolStartCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
+/// Callback invoked when a tool invocation finishes.
+pub type ToolEndCallback = Arc<dyn Fn(&str, &str, bool) + Send + Sync>;
+
 /// Coordinates the iterative model $\to$ tool $\to$ result $\to$ model execution loop.
 pub struct AgentLoop {
     max_iterations: usize,
     cancellation_token: CancellationToken,
     store: Option<Arc<RunStore>>,
     redactor: Arc<Redactor>,
+    token_callback: Option<TokenCallback>,
+    tool_start_callback: Option<ToolStartCallback>,
+    tool_end_callback: Option<ToolEndCallback>,
 }
 
 impl AgentLoop {
@@ -252,6 +262,9 @@ impl AgentLoop {
             cancellation_token: CancellationToken::new(),
             store: None,
             redactor: Arc::new(Redactor::default()),
+            token_callback: None,
+            tool_start_callback: None,
+            tool_end_callback: None,
         }
     }
 
@@ -276,6 +289,23 @@ impl AgentLoop {
     /// Attach a custom [`Redactor`] for scrubbing sensitive secrets from traces.
     pub fn with_redactor(mut self, redactor: Arc<Redactor>) -> Self {
         self.redactor = redactor;
+        self
+    }
+
+    /// Attach a streaming token callback invoked on each incremental response token.
+    pub fn with_token_callback(mut self, cb: TokenCallback) -> Self {
+        self.token_callback = Some(cb);
+        self
+    }
+
+    /// Attach tool lifecycle callbacks invoked on tool start and tool completion.
+    pub fn with_tool_callbacks(
+        mut self,
+        start_cb: ToolStartCallback,
+        end_cb: ToolEndCallback,
+    ) -> Self {
+        self.tool_start_callback = Some(start_cb);
+        self.tool_end_callback = Some(end_cb);
         self
     }
 
@@ -359,8 +389,14 @@ impl AgentLoop {
                 sequence += 1;
             }
 
-            // Generate next action from model
-            let output = model.generate(context)?;
+            // Generate next action from model (with progressive token streaming)
+            let mut on_token = |chunk: &str| {
+                if let Some(cb) = &self.token_callback {
+                    cb(chunk);
+                }
+                Ok(())
+            };
+            let output = model.stream(context, &mut on_token)?;
             if let Some(usage) = model.last_usage() {
                 total_prompt_tokens += usage.prompt_tokens;
                 total_completion_tokens += usage.completion_tokens;
@@ -476,11 +512,21 @@ impl AgentLoop {
 
                         context.push_message(ChatMessage::ToolCall(call.clone()));
 
+                        if let Some(cb) = &self.tool_start_callback {
+                            let args_str =
+                                serde_json::to_string(&call.arguments).unwrap_or_default();
+                            cb(&call.name, &args_str);
+                        }
+
                         // Execute tool through registry (validates schema before dispatch)
                         let tool_result = registry.execute(&call.name, &call.arguments);
 
                         match tool_result {
                             Ok(res) => {
+                                if let Some(cb) = &self.tool_end_callback {
+                                    cb(&call.name, &res.output, res.is_error);
+                                }
+
                                 let redacted_out = self.redactor.redact_text(&res.output);
                                 if let Some(store) = &self.store {
                                     let ev = if res.is_error {
@@ -521,6 +567,10 @@ impl AgentLoop {
                             }
                             Err(e) => {
                                 let err_msg = format!("execution error: {}", e);
+                                if let Some(cb) = &self.tool_end_callback {
+                                    cb(&call.name, &err_msg, true);
+                                }
+
                                 let redacted_err = self.redactor.redact_text(&err_msg);
                                 if let Some(store) = &self.store {
                                     let ev = ExecutionEvent::ToolFailed {

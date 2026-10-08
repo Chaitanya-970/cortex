@@ -97,6 +97,20 @@ pub trait ModelProvider: Send + Sync {
     /// Generate the next structured response given current agent context.
     fn generate(&self, context: &AgentContext) -> Result<ModelOutput>;
 
+    /// Stream the next structured response token-by-token given current agent context.
+    /// Progressive text tokens are sent to `on_token`.
+    fn stream(
+        &self,
+        context: &AgentContext,
+        on_token: &mut dyn FnMut(&str) -> Result<()>,
+    ) -> Result<ModelOutput> {
+        let output = self.generate(context)?;
+        if let ModelOutput::FinalAnswer(ref ans) = output {
+            on_token(ans)?;
+        }
+        Ok(output)
+    }
+
     /// Return token usage reported from the most recent inference call, if available.
     fn last_usage(&self) -> Option<ModelUsage> {
         None
@@ -145,6 +159,20 @@ impl ModelProvider for MockModelProvider {
         queue.pop_front().ok_or_else(|| {
             CortexError::Internal("MockModelProvider ran out of scripted responses".to_string())
         })
+    }
+
+    fn stream(
+        &self,
+        context: &AgentContext,
+        on_token: &mut dyn FnMut(&str) -> Result<()>,
+    ) -> Result<ModelOutput> {
+        let output = self.generate(context)?;
+        if let ModelOutput::FinalAnswer(ref ans) = output {
+            for word in ans.split_inclusive(' ') {
+                on_token(word)?;
+            }
+        }
+        Ok(output)
     }
 }
 
@@ -211,6 +239,20 @@ impl ModelProvider for ReplayModelProvider {
         queue.pop_front().ok_or_else(|| {
             CortexError::Internal("ReplayModelProvider ran out of recorded responses".to_string())
         })
+    }
+
+    fn stream(
+        &self,
+        context: &AgentContext,
+        on_token: &mut dyn FnMut(&str) -> Result<()>,
+    ) -> Result<ModelOutput> {
+        let output = self.generate(context)?;
+        if let ModelOutput::FinalAnswer(ref ans) = output {
+            for word in ans.split_inclusive(' ') {
+                on_token(word)?;
+            }
+        }
+        Ok(output)
     }
 }
 

@@ -52,10 +52,43 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             }
         }
 
+        if app.chat_input.starts_with('/') && !app.chat_input.contains(' ') {
+            app.update_autocomplete();
+        } else {
+            app.autocomplete_state.is_open = false;
+        }
+
+        // Check floating autocomplete popup navigation first
+        if app.autocomplete_state.is_open {
+            match key.code {
+                KeyCode::Up => {
+                    app.autocomplete_prev();
+                    return;
+                }
+                KeyCode::Down => {
+                    app.autocomplete_next();
+                    return;
+                }
+                KeyCode::Tab | KeyCode::Enter => {
+                    app.autocomplete_accept();
+                    return;
+                }
+                KeyCode::Esc => {
+                    app.autocomplete_close();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         match key.code {
             KeyCode::Tab => {
                 if app.chat_input.starts_with('/') {
-                    if let Some(completed) = crate::commands::autocomplete_command(&app.chat_input)
+                    app.update_autocomplete();
+                    if app.autocomplete_state.is_open {
+                        app.autocomplete_accept();
+                    } else if let Some(completed) =
+                        crate::commands::autocomplete_command(&app.chat_input)
                     {
                         app.chat_input = completed;
                         app.chat_cursor = app.chat_input.len();
@@ -63,6 +96,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                 } else if app.chat_input.is_empty() {
                     app.chat_input = "/".to_string();
                     app.chat_cursor = 1;
+                    app.update_autocomplete();
                 } else {
                     app.chat_input_insert(' ');
                     app.chat_input_insert(' ');
@@ -70,7 +104,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::BackTab => {}
             KeyCode::Esc => {
-                if app.chat_is_running {
+                if app.autocomplete_state.is_open {
+                    app.autocomplete_close();
+                } else if app.chat_is_running {
                     app.cancel_chat_agent();
                 } else if !app.chat_input.is_empty() {
                     app.chat_input_clear();

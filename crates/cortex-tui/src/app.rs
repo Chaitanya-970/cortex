@@ -1,6 +1,6 @@
 //! Application state management and navigation model for the Cortex TUI.
 
-use cortex_core::{EventRecord, ExecutionEvent, RunId};
+use cortex_core::EventRecord;
 use cortex_harness::suite::get_suite_tasks;
 use cortex_harness::task::BenchmarkTask;
 use cortex_runtime::agent::{AgentContext, AgentLoop, AgentRunResult, CancellationToken};
@@ -302,12 +302,41 @@ pub enum ChatAgentUpdate {
         /// Model descriptor name.
         model: String,
     },
+    /// Incremental token streamed from model.
+    Token(String),
+    /// Tool execution started.
+    ToolStarted {
+        /// Tool name.
+        name: String,
+        /// Arguments json string.
+        args: String,
+    },
+    /// Tool execution completed.
+    ToolCompleted {
+        /// Tool name.
+        name: String,
+        /// Output text.
+        output: String,
+        /// Whether tool resulted in error.
+        is_error: bool,
+    },
     /// Agent completed normally.
     Completed(Box<AgentRunResult>),
     /// Agent was cancelled.
     Cancelled(String),
     /// Agent encountered a fatal error.
     Error(String),
+}
+
+/// Floating autocomplete popup state for slash commands.
+#[derive(Debug, Clone, Default)]
+pub struct AutocompleteState {
+    /// Whether the autocomplete popup is currently displayed.
+    pub is_open: bool,
+    /// List of command definitions matching current query.
+    pub matches: Vec<&'static crate::commands::CommandDefinition>,
+    /// Index of currently highlighted match.
+    pub selected_idx: usize,
 }
 
 /// Execution handle for an asynchronous agent execution thread.
@@ -431,6 +460,12 @@ pub struct App {
     pub portal_input_buffer: String,
     /// Draft state for multi-step portal creation.
     pub new_portal_draft: NewPortalDraft,
+
+    // Autocomplete & Indexing
+    /// Floating autocomplete popup state for slash commands.
+    pub autocomplete_state: AutocompleteState,
+    /// Background workspace indexer.
+    pub indexer: crate::indexer::BackgroundIndexer,
 }
 
 impl App {
@@ -518,16 +553,30 @@ impl App {
             portal_input_mode: PortalInputMode::Normal,
             portal_input_buffer: String::new(),
             new_portal_draft: NewPortalDraft::default(),
+
+            autocomplete_state: AutocompleteState::default(),
+            indexer: {
+                let idx = crate::indexer::BackgroundIndexer::new();
+                let ws_buf = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                idx.start_indexing(ws_buf);
+                idx
+            },
         };
+
+        // Ensure user settings file exists in ~/.cortex
+        let _ = cortex_core::settings::UserSettings::load_or_create();
 
         app.load_tasks();
         app.refresh();
         app
     }
 
-    /// Default set of preconfigured model portals.
+    /// Default set of preconfigured model portals seeded with user settings.
     pub fn default_portals() -> Vec<ModelPortal> {
-        vec![
+        let settings = cortex_core::settings::UserSettings::load_or_default();
+        let target_model = settings.model.clone();
+
+        let mut portals = vec![
             ModelPortal::new(
                 "openai-gpt4o-mini",
                 "OpenAI GPT-4o-mini",
@@ -535,7 +584,7 @@ impl App {
                 "gpt-4o-mini",
                 None,
                 None,
-                true,
+                false,
             ),
             ModelPortal::new(
                 "openai-gpt4o",
@@ -591,7 +640,52 @@ impl App {
                 None,
                 false,
             ),
-        ]
+        ];
+
+        // Seed API keys and base URLs from settings
+        for portal in &mut portals {
+            if portal.api_key.is_none() {
+                portal.api_key = settings.resolve_api_key(&portal.model_name);
+            }
+            if portal.base_url.is_none() {
+                portal.base_url = settings.resolve_base_url(&portal.model_name);
+            }
+        }
+
+        // Activate the portal that matches target_model
+        let mut found = false;
+        for portal in &mut portals {
+            if portal.model_name.eq_ignore_ascii_case(&target_model)
+                || portal.id.eq_ignore_ascii_case(&target_model)
+            {
+                portal.is_active = true;
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            // Add custom configured portal
+            let provider = if target_model.to_lowercase().starts_with("claude") {
+                "anthropic"
+            } else if target_model.to_lowercase().starts_with("ollama/") {
+                "ollama"
+            } else {
+                "openai"
+            };
+            let custom_portal = ModelPortal::new(
+                "custom-settings-model",
+                format!("Configured ({})", target_model),
+                provider,
+                &target_model,
+                settings.resolve_base_url(&target_model),
+                settings.resolve_api_key(&target_model),
+                true,
+            );
+            portals.insert(0, custom_portal);
+        }
+
+        portals
     }
 
     /// Load benchmark tasks from the harness suite definitions.
@@ -772,6 +866,7 @@ impl App {
             self.chat_input.insert(self.chat_cursor, c);
             self.chat_cursor += 1;
         }
+        self.update_autocomplete();
     }
 
     /// Delete character immediately preceding the cursor in chat input.
@@ -782,12 +877,61 @@ impl App {
                 self.chat_input.remove(self.chat_cursor);
             }
         }
+        self.update_autocomplete();
     }
 
     /// Delete character at current cursor position in chat input.
     pub fn chat_input_delete(&mut self) {
         if self.chat_cursor < self.chat_input.len() {
             self.chat_input.remove(self.chat_cursor);
+        }
+        self.update_autocomplete();
+    }
+
+    /// Update floating autocomplete state based on current input buffer.
+    pub fn update_autocomplete(&mut self) {
+        if self.chat_input.starts_with('/') && !self.chat_input.contains(' ') {
+            let matches = crate::commands::search_commands(&self.chat_input);
+            if !matches.is_empty() {
+                self.autocomplete_state.is_open = true;
+                self.autocomplete_state.matches = matches;
+                if self.autocomplete_state.selected_idx >= self.autocomplete_state.matches.len() {
+                    self.autocomplete_state.selected_idx = 0;
+                }
+                return;
+            }
+        }
+        self.autocomplete_state.is_open = false;
+        self.autocomplete_state.matches.clear();
+        self.autocomplete_state.selected_idx = 0;
+    }
+
+    /// Select next item in autocomplete popup.
+    pub fn autocomplete_next(&mut self) {
+        if self.autocomplete_state.is_open && !self.autocomplete_state.matches.is_empty() {
+            self.autocomplete_state.selected_idx =
+                (self.autocomplete_state.selected_idx + 1) % self.autocomplete_state.matches.len();
+        }
+    }
+
+    /// Select previous item in autocomplete popup.
+    pub fn autocomplete_prev(&mut self) {
+        if self.autocomplete_state.is_open && !self.autocomplete_state.matches.is_empty() {
+            if self.autocomplete_state.selected_idx == 0 {
+                self.autocomplete_state.selected_idx = self.autocomplete_state.matches.len() - 1;
+            } else {
+                self.autocomplete_state.selected_idx -= 1;
+            }
+        }
+    }
+
+    /// Accept highlighted autocomplete command into input prompt.
+    pub fn autocomplete_accept(&mut self) {
+        if self.autocomplete_state.is_open && !self.autocomplete_state.matches.is_empty() {
+            let selected = self.autocomplete_state.matches[self.autocomplete_state.selected_idx];
+            self.chat_input = format!("/{} ", selected.name);
+            self.chat_cursor = self.chat_input.len();
+            self.autocomplete_state.is_open = false;
         }
     }
 
@@ -851,11 +995,17 @@ impl App {
         }
     }
 
+    /// Close autocomplete popup.
+    pub fn autocomplete_close(&mut self) {
+        self.autocomplete_state.is_open = false;
+    }
+
     /// Clear chat prompt input line and reset cursor.
     pub fn chat_input_clear(&mut self) {
         self.chat_input.clear();
         self.chat_cursor = 0;
         self.chat_history_idx = None;
+        self.update_autocomplete();
     }
 
     /// Recall previous command from history into input.
@@ -1063,43 +1213,84 @@ impl App {
                             is_expanded: false,
                         });
                     }
+                    ChatAgentUpdate::Token(token) => {
+                        if let Some(last) = self.chat_messages.last_mut() {
+                            if last.role == ChatRole::Assistant {
+                                last.content.push_str(&token);
+                            } else {
+                                self.chat_messages
+                                    .push(ChatMessageItem::new(ChatRole::Assistant, token));
+                            }
+                        } else {
+                            self.chat_messages
+                                .push(ChatMessageItem::new(ChatRole::Assistant, token));
+                        }
+                    }
+                    ChatAgentUpdate::ToolStarted { name, args } => {
+                        let formatted = format_tool_start(&name, &args);
+                        self.chat_messages
+                            .push(ChatMessageItem::new(ChatRole::Tool, formatted));
+                    }
+                    ChatAgentUpdate::ToolCompleted {
+                        name,
+                        output,
+                        is_error,
+                    } => {
+                        let formatted = format_tool_end(&name, &output, is_error);
+                        self.chat_messages.push(ChatMessageItem::new(
+                            if is_error {
+                                ChatRole::Error
+                            } else {
+                                ChatRole::Tool
+                            },
+                            formatted,
+                        ));
+                    }
                     ChatAgentUpdate::Completed(res) => {
                         self.session_tokens += res.tokens_total as u64;
                         self.session_cost += res.estimated_cost_usd;
                         self.run_start_instant = None;
-                        let answer = &res.final_answer;
-                        if let (Some(start), Some(end)) =
-                            (answer.find("<think>"), answer.find("</think>"))
-                        {
-                            let thought = answer[start + 7..end].trim().to_string();
-                            let remaining = answer[end + 8..].trim().to_string();
-                            if !thought.is_empty() {
+
+                        // Ensure final answer is displayed if streaming was quiet
+                        let has_assistant = self.chat_messages.last().is_some_and(|m| {
+                            m.role == ChatRole::Assistant && !m.content.trim().is_empty()
+                        });
+
+                        if !has_assistant && !res.final_answer.trim().is_empty() {
+                            let answer = &res.final_answer;
+                            if let (Some(start), Some(end)) =
+                                (answer.find("<think>"), answer.find("</think>"))
+                            {
+                                let thought = answer[start + 7..end].trim().to_string();
+                                let remaining = answer[end + 8..].trim().to_string();
+                                if !thought.is_empty() {
+                                    self.chat_messages.push(ChatMessageItem {
+                                        role: ChatRole::Thinking,
+                                        content: thought,
+                                        timestamp: now.clone(),
+                                        is_expanded: self.thinking_expanded,
+                                    });
+                                }
                                 self.chat_messages.push(ChatMessageItem {
-                                    role: ChatRole::Thinking,
-                                    content: thought,
+                                    role: ChatRole::Assistant,
+                                    content: remaining,
                                     timestamp: now.clone(),
-                                    is_expanded: self.thinking_expanded,
+                                    is_expanded: false,
+                                });
+                            } else {
+                                self.chat_messages.push(ChatMessageItem {
+                                    role: ChatRole::Assistant,
+                                    content: res.final_answer.clone(),
+                                    timestamp: now.clone(),
+                                    is_expanded: false,
                                 });
                             }
-                            self.chat_messages.push(ChatMessageItem {
-                                role: ChatRole::Assistant,
-                                content: remaining,
-                                timestamp: now.clone(),
-                                is_expanded: false,
-                            });
-                        } else {
-                            self.chat_messages.push(ChatMessageItem {
-                                role: ChatRole::Assistant,
-                                content: res.final_answer.clone(),
-                                timestamp: now.clone(),
-                                is_expanded: false,
-                            });
                         }
 
                         self.chat_messages.push(ChatMessageItem {
                             role: ChatRole::System,
                             content: format!(
-                                "Run completed in {}ms across {} iterations | Tokens: {} | Cost: ${:.4}",
+                                "✓ Run completed in {}ms across {} iterations | Tokens: {} | Cost: ${:.4}",
                                 res.duration_ms,
                                 res.iterations,
                                 res.tokens_total,
@@ -1129,81 +1320,6 @@ impl App {
                             is_expanded: false,
                         });
                         finished = true;
-                    }
-                }
-            }
-
-            // Stream new intermediate events from SQLite store if available
-            if let (Some(store), Some(run_id)) = (&self.store, &handle.run_id) {
-                let r_id = RunId::from(run_id.clone());
-                if let Ok(events) = store.get_events(&r_id) {
-                    for event in events {
-                        if event.sequence > self.chat_last_event_seq {
-                            self.chat_last_event_seq = event.sequence;
-                            let ts = event
-                                .timestamp
-                                .split('T')
-                                .nth(1)
-                                .unwrap_or(&event.timestamp)
-                                .to_string();
-                            match &event.event {
-                                ExecutionEvent::ToolStarted {
-                                    tool_name,
-                                    arguments,
-                                    ..
-                                } => {
-                                    let args_str = arguments.to_string();
-                                    self.chat_messages.push(ChatMessageItem {
-                                        role: ChatRole::Tool,
-                                        content: format!(
-                                            "Tool `{}` executing with args:\n{}",
-                                            tool_name, args_str
-                                        ),
-                                        timestamp: ts,
-                                        is_expanded: self.tool_calls_expanded,
-                                    });
-                                }
-                                ExecutionEvent::ToolCompleted {
-                                    tool_name, output, ..
-                                } => {
-                                    let content = if output.trim().is_empty() {
-                                        format!("Tool `{}` completed successfully.", tool_name)
-                                    } else {
-                                        format!("Tool `{}` completed:\n{}", tool_name, output)
-                                    };
-                                    self.chat_messages.push(ChatMessageItem {
-                                        role: ChatRole::Tool,
-                                        content,
-                                        timestamp: ts,
-                                        is_expanded: self.tool_calls_expanded,
-                                    });
-                                }
-                                ExecutionEvent::ToolFailed {
-                                    tool_name, error, ..
-                                } => {
-                                    self.chat_messages.push(ChatMessageItem {
-                                        role: ChatRole::Error,
-                                        content: format!("Tool {} failed: {}", tool_name, error),
-                                        timestamp: ts,
-                                        is_expanded: false,
-                                    });
-                                }
-                                ExecutionEvent::ModelRequest { prompt_preview, .. } => {
-                                    let preview = if prompt_preview.len() > 60 {
-                                        format!("{}...", &prompt_preview[..57])
-                                    } else {
-                                        prompt_preview.clone()
-                                    };
-                                    self.chat_messages.push(ChatMessageItem {
-                                        role: ChatRole::Thinking,
-                                        content: format!("Planning next action:\n{}", preview),
-                                        timestamp: ts,
-                                        is_expanded: self.thinking_expanded,
-                                    });
-                                }
-                                _ => {}
-                            }
-                        }
                     }
                 }
             }
@@ -1603,9 +1719,33 @@ fn execute_chat_agent(
         model: model.clone(),
     });
 
+    let sender_token = sender.clone();
+    let token_cb = Arc::new(move |token: &str| {
+        let _ = sender_token.send(ChatAgentUpdate::Token(token.to_string()));
+    });
+
+    let sender_start = sender.clone();
+    let tool_start_cb = Arc::new(move |name: &str, args: &str| {
+        let _ = sender_start.send(ChatAgentUpdate::ToolStarted {
+            name: name.to_string(),
+            args: args.to_string(),
+        });
+    });
+
+    let sender_end = sender.clone();
+    let tool_end_cb = Arc::new(move |name: &str, output: &str, is_error: bool| {
+        let _ = sender_end.send(ChatAgentUpdate::ToolCompleted {
+            name: name.to_string(),
+            output: output.to_string(),
+            is_error,
+        });
+    });
+
     let agent_loop = AgentLoop::new(15)
         .with_cancellation_token(cancel_token)
-        .with_store_optional(store);
+        .with_store_optional(store)
+        .with_token_callback(token_cb)
+        .with_tool_callbacks(tool_start_cb, tool_end_cb);
 
     match agent_loop.run(&mut context, &*provider, &registry) {
         Ok(res) => {
@@ -1617,6 +1757,76 @@ fn execute_chat_agent(
         Err(e) => {
             let _ = sender.send(ChatAgentUpdate::Error(e.to_string()));
         }
+    }
+}
+
+fn format_tool_start(name: &str, args: &str) -> String {
+    let parsed: serde_json::Value = serde_json::from_str(args).unwrap_or_default();
+    match name {
+        "grep" => {
+            let pat = parsed.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
+            let path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+            format!("grep \"{}\" {}", pat, path)
+        }
+        "read_file" => {
+            let path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            format!("Reading {}", path)
+        }
+        "write_file" | "edit_file" => {
+            let path = parsed.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            format!("✎ {}", path)
+        }
+        "bash" | "execute_command" | "shell" => {
+            let cmd = parsed.get("command").and_then(|v| v.as_str()).unwrap_or("");
+            format!("$ {}", cmd)
+        }
+        "glob" => {
+            let pat = parsed.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
+            format!("glob {}", pat)
+        }
+        "git_diff" => "git diff".to_string(),
+        "git_status" => "git status".to_string(),
+        _ => format!("{}({})", name, args),
+    }
+}
+
+fn format_tool_end(name: &str, output: &str, is_error: bool) -> String {
+    if is_error {
+        let first_line = output.lines().next().unwrap_or("error");
+        return format!("✗ {}", first_line);
+    }
+    match name {
+        "grep" => {
+            let count = output.lines().filter(|l| !l.trim().is_empty()).count();
+            format!("✓ {} matches", count)
+        }
+        "read_file" => {
+            let lines = output.lines().count();
+            format!("✓ {} lines", lines)
+        }
+        "write_file" | "edit_file" => "✓ updated".to_string(),
+        "bash" | "execute_command" | "shell" => {
+            let trimmed = output.trim();
+            if trimmed.is_empty() {
+                "✓ done".to_string()
+            } else {
+                let first = trimmed.lines().next().unwrap_or("done");
+                if first.len() > 60 {
+                    format!("✓ {}...", &first[..57])
+                } else {
+                    format!("✓ {}", first)
+                }
+            }
+        }
+        "glob" => {
+            let count = output.lines().filter(|l| !l.trim().is_empty()).count();
+            format!("✓ {} files found", count)
+        }
+        "git_diff" => {
+            let count = output.lines().count();
+            format!("✓ diff ({} lines)", count)
+        }
+        _ => "✓ done".to_string(),
     }
 }
 

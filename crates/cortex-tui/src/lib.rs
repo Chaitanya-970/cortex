@@ -7,7 +7,9 @@
 pub mod app;
 pub mod commands;
 pub mod event;
+pub mod indexer;
 pub mod markdown;
+pub mod session;
 pub mod terminal;
 pub mod theme;
 pub mod ui;

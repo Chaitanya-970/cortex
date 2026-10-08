@@ -3,6 +3,129 @@
 use crate::app::{AgentLifecycleState, App, ChatMessageItem, ModelPortal};
 use cortex_core::VERSION;
 
+/// Definition of a supported slash command with metadata for autocomplete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandDefinition {
+    /// Command keyword without leading slash.
+    pub name: &'static str,
+    /// Brief description shown in autocomplete popup.
+    pub description: &'static str,
+    /// Command usage syntax.
+    pub usage: &'static str,
+    /// Command aliases without leading slash.
+    pub aliases: &'static [&'static str],
+}
+
+/// Catalog of all slash commands supported in Cortex TUI.
+pub static COMMAND_CATALOG: &[CommandDefinition] = &[
+    CommandDefinition {
+        name: "help",
+        description: "Show command catalog & shortcuts",
+        usage: "/help",
+        aliases: &["?"],
+    },
+    CommandDefinition {
+        name: "clear",
+        description: "Clear conversation history",
+        usage: "/clear",
+        aliases: &["cls"],
+    },
+    CommandDefinition {
+        name: "model",
+        description: "Select or configure AI model",
+        usage: "/model [list|set <name>]",
+        aliases: &["models"],
+    },
+    CommandDefinition {
+        name: "settings",
+        description: "Configure ~/.cortex/settings.json",
+        usage: "/settings [set <model|url|key> <val>|reload]",
+        aliases: &["config", "pref"],
+    },
+    CommandDefinition {
+        name: "status",
+        description: "Show workspace and runtime status",
+        usage: "/status",
+        aliases: &["info"],
+    },
+    CommandDefinition {
+        name: "diff",
+        description: "Show git diff of uncommitted changes",
+        usage: "/diff",
+        aliases: &[],
+    },
+    CommandDefinition {
+        name: "sessions",
+        description: "List saved chat sessions",
+        usage: "/sessions",
+        aliases: &[],
+    },
+    CommandDefinition {
+        name: "resume",
+        description: "Resume a saved chat session",
+        usage: "/resume <id>",
+        aliases: &[],
+    },
+    CommandDefinition {
+        name: "cost",
+        description: "Display token usage and cost metrics",
+        usage: "/cost",
+        aliases: &[],
+    },
+    CommandDefinition {
+        name: "thinking",
+        description: "Toggle reasoning trace visibility",
+        usage: "/thinking [on|off]",
+        aliases: &["think"],
+    },
+    CommandDefinition {
+        name: "tools",
+        description: "List registered tools & permissions",
+        usage: "/tools",
+        aliases: &["tool"],
+    },
+    CommandDefinition {
+        name: "compact",
+        description: "Compact conversation context",
+        usage: "/compact",
+        aliases: &[],
+    },
+    CommandDefinition {
+        name: "doctor",
+        description: "Check system health and API keys",
+        usage: "/doctor",
+        aliases: &["check"],
+    },
+    CommandDefinition {
+        name: "exit",
+        description: "Exit interactive agent harness",
+        usage: "/exit",
+        aliases: &["quit", "q"],
+    },
+];
+
+/// Search matching commands for autocomplete popup in < 5ms.
+pub fn search_commands(query: &str) -> Vec<&'static CommandDefinition> {
+    let clean = query.trim_start_matches('/').to_lowercase();
+    if clean.is_empty() {
+        return COMMAND_CATALOG.iter().collect();
+    }
+
+    let mut prefix_matches = Vec::new();
+    let mut other_matches = Vec::new();
+
+    for cmd in COMMAND_CATALOG {
+        if cmd.name.starts_with(&clean) || cmd.aliases.iter().any(|a| a.starts_with(&clean)) {
+            prefix_matches.push(cmd);
+        } else if cmd.name.contains(&clean) || cmd.description.to_lowercase().contains(&clean) {
+            other_matches.push(cmd);
+        }
+    }
+
+    prefix_matches.extend(other_matches);
+    prefix_matches
+}
+
 /// Parsed slash commands available in the interactive terminal harness.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
@@ -44,10 +167,22 @@ pub enum SlashCommand {
         /// Optional argument: `Some("on")`, `Some("off")`, or `None` for toggle.
         arg: Option<String>,
     },
-    /// Clear the chat message log.
+    /// Clear the chat message log and auto-save prior session.
     Clear,
+    /// View or configure user settings in ~/.cortex/settings.json.
+    Settings {
+        /// Subcommand arguments (e.g. `["set", "model", "gpt-4o"]`, `["reload"]`).
+        args: Vec<String>,
+    },
     /// Compact the chat session log.
     Compact,
+    /// List saved chat sessions.
+    Sessions,
+    /// Resume a saved chat session.
+    Resume {
+        /// Target session identifier or prefix.
+        id: String,
+    },
     /// Exit the TUI harness.
     Quit,
     /// Unrecognized slash command.
@@ -73,6 +208,7 @@ pub fn parse_command(input: &str) -> Option<SlashCommand> {
     match cmd.as_str() {
         "help" | "?" => Some(SlashCommand::Help),
         "model" | "models" => Some(SlashCommand::Model { args }),
+        "settings" | "config" | "pref" | "preferences" => Some(SlashCommand::Settings { args }),
         "portal" | "portals" => Some(SlashCommand::Portal { args }),
         "agent" | "agents" => Some(SlashCommand::Agents { args }),
         "tools" | "tool" => Some(SlashCommand::Tools),
@@ -89,6 +225,11 @@ pub fn parse_command(input: &str) -> Option<SlashCommand> {
         }
         "clear" | "cls" => Some(SlashCommand::Clear),
         "compact" => Some(SlashCommand::Compact),
+        "sessions" => Some(SlashCommand::Sessions),
+        "resume" => {
+            let id = args.first().cloned().unwrap_or_default();
+            Some(SlashCommand::Resume { id })
+        }
         "quit" | "exit" | "q" => Some(SlashCommand::Quit),
         other => Some(SlashCommand::Unknown(other.to_string())),
     }
@@ -100,6 +241,7 @@ pub fn execute_command(app: &mut App, command: SlashCommand) -> String {
     match command {
         SlashCommand::Help => format_help(),
         SlashCommand::Model { args } => handle_model_command(app, &args),
+        SlashCommand::Settings { args } => handle_settings_command(app, &args),
         SlashCommand::Portal { args } => handle_portal_command(app, &args),
         SlashCommand::Agents { args } => handle_agents_command(app, &args),
         SlashCommand::Tools => handle_tools_command(),
@@ -111,12 +253,10 @@ pub fn execute_command(app: &mut App, command: SlashCommand) -> String {
         SlashCommand::Doctor => handle_doctor_command(app),
         SlashCommand::Cost => handle_cost_command(app),
         SlashCommand::Thinking { arg } => handle_thinking_command(app, arg),
-        SlashCommand::Clear => {
-            app.chat_messages.clear();
-            app.chat_scroll = 0;
-            "Chat log cleared.".to_string()
-        }
+        SlashCommand::Clear => handle_clear_command(app),
         SlashCommand::Compact => handle_compact_command(app),
+        SlashCommand::Sessions => handle_sessions_command(),
+        SlashCommand::Resume { id } => handle_resume_command(app, &id),
         SlashCommand::Quit => {
             app.should_quit = true;
             "Exiting Cortex TUI... Goodbye!".to_string()
@@ -645,6 +785,104 @@ fn handle_diff_command() -> String {
     }
 }
 
+fn handle_settings_command(app: &mut App, args: &[String]) -> String {
+    let settings_file = cortex_core::settings::settings_path();
+    let mut settings = cortex_core::settings::UserSettings::load_or_default();
+
+    if args.is_empty() {
+        let key_status = if settings.api_key.is_some()
+            || settings.openai_api_key.is_some()
+            || settings.anthropic_api_key.is_some()
+        {
+            "Configured"
+        } else {
+            "Not set"
+        };
+        let url_desc = settings.base_url.as_deref().unwrap_or("(default)");
+        let sessions_dir = cortex_core::settings::cortex_home_dir().join("sessions");
+        let db_path = cortex_core::settings::cortex_home_dir().join("cortex.db");
+
+        return format!(
+            "Cortex Settings ({path}):\n  \
+             • Model         : {model}\n  \
+             • API Key       : {key_status}\n  \
+             • Base URL      : {url_desc}\n  \
+             • Max Steps     : {max_iter}\n  \
+             • Auto-save     : {auto_save}\n  \
+             • Sessions Dir  : {sessions}\n  \
+             • SQLite DB     : {db}\n\n\
+             To edit settings, modify '{path}' or use:\n  \
+             /settings set model <model-name>\n  \
+             /settings set url <base-url>\n  \
+             /settings set key <api-key>\n  \
+             /settings reload",
+            path = settings_file.display(),
+            model = settings.model,
+            key_status = key_status,
+            url_desc = url_desc,
+            max_iter = settings.max_iterations,
+            auto_save = settings.auto_save_sessions,
+            sessions = sessions_dir.display(),
+            db = db_path.display(),
+        );
+    }
+
+    match args[0].to_lowercase().as_str() {
+        "reload" => {
+            app.portals = App::default_portals();
+            let new_settings = cortex_core::settings::UserSettings::load_or_default();
+            format!(
+                "✓ Reloaded settings from {}. Active model: {}",
+                settings_file.display(),
+                new_settings.model
+            )
+        }
+        "set" => {
+            if args.len() < 3 {
+                return "Usage: /settings set <model|url|key> <value>".to_string();
+            }
+            let key = args[1].to_lowercase();
+            let val = args[2..].join(" ");
+            match key.as_str() {
+                "model" => {
+                    settings.model = val.clone();
+                    if let Err(e) = settings.save() {
+                        return format!("Failed to save settings: {}", e);
+                    }
+                    app.portals = App::default_portals();
+                    format!(
+                        "✓ Updated model to '{}' in {}",
+                        val,
+                        settings_file.display()
+                    )
+                }
+                "url" | "base_url" => {
+                    settings.base_url = Some(val.clone());
+                    if let Err(e) = settings.save() {
+                        return format!("Failed to save settings: {}", e);
+                    }
+                    app.portals = App::default_portals();
+                    format!(
+                        "✓ Updated base_url to '{}' in {}",
+                        val,
+                        settings_file.display()
+                    )
+                }
+                "key" | "api_key" => {
+                    settings.api_key = Some(val.clone());
+                    if let Err(e) = settings.save() {
+                        return format!("Failed to save settings: {}", e);
+                    }
+                    app.portals = App::default_portals();
+                    format!("✓ Updated API key in {}", settings_file.display())
+                }
+                other => format!("Unknown setting '{}'. Supported: model, url, key.", other),
+            }
+        }
+        _ => "Usage: /settings [set <model|url|key> <val> | reload]".to_string(),
+    }
+}
+
 fn handle_status_command(app: &App) -> String {
     let portal = app.active_portal();
     let store_desc = if app.store.is_some() {
@@ -652,32 +890,46 @@ fn handle_status_command(app: &App) -> String {
     } else {
         "In-Memory / Ephemeral"
     };
-    let active_agents = app.agents.len();
-    let total_runs = app.runs.len();
+    let indexed = app.indexer.read();
+    let index_desc = if indexed.is_ready {
+        format!("{} files ready", indexed.total_files)
+    } else {
+        "indexing in background...".to_string()
+    };
+    let git_desc = app.git_branch_info.as_deref().unwrap_or("none");
+    let cwd = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    let settings_path = cortex_core::settings::settings_path();
 
     format!(
         "┌── Cortex Runtime Diagnostic Status ────────────────────────────────────┐\n\
          │ Runtime Version : Cortex v{:<44}│\n\
-         │ Harness Mode    : Interactive Terminal Chat & Control Plane            │\n\
+         │ Workspace Root  : {:<51}│\n\
+         │ Git Branch      : {:<51}│\n\
+         │ Workspace Index : {:<51}│\n\
+         │ Settings File   : {:<51}│\n\
          │ Active Portal   : {:<51}│\n\
          │ Active Model    : {:<51}│\n\
+         │ Session Tokens  : {:<51}│\n\
+         │ Session Cost    : ${:<50.4}│\n\
          │ Persistence     : {:<51}│\n\
-         │ Total Runs      : {:<51}│\n\
-         │ Active Workers  : {:<51}│\n\
-         │ Thinking Mode   : {:<51}│\n\
          │ Sandbox Boundary: Active (confining workspace)                         │\n\
          └────────────────────────────────────────────────────────────────────────┘",
         VERSION,
+        if cwd.len() > 50 {
+            format!("{}...", &cwd[..47])
+        } else {
+            cwd
+        },
+        git_desc,
+        index_desc,
+        settings_path.display().to_string(),
         portal.name,
         portal.model_name,
+        app.session_tokens,
+        app.session_cost,
         store_desc,
-        total_runs,
-        active_agents,
-        if app.thinking_expanded {
-            "Expanded (Full Reasoning Trace)"
-        } else {
-            "Collapsed (Compact Summary)"
-        }
     )
 }
 
@@ -764,6 +1016,124 @@ fn handle_compact_command(app: &mut App) -> String {
         count_before,
         app.chat_messages.len()
     )
+}
+
+fn handle_clear_command(app: &mut App) -> String {
+    if app.chat_messages.len() > 1 {
+        let first_user_prompt = app
+            .chat_messages
+            .iter()
+            .find(|m| m.role == crate::app::ChatRole::User)
+            .map(|m| m.content.clone())
+            .unwrap_or_else(|| "Session".to_string());
+        let title = first_user_prompt
+            .lines()
+            .next()
+            .unwrap_or("Session")
+            .to_string();
+        let now = chrono::Utc::now().to_rfc3339();
+        let id = format!("session-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+
+        let saved = crate::session::SavedSession {
+            id,
+            title,
+            created_at: now.clone(),
+            updated_at: now,
+            model: app.active_portal().model_name.clone(),
+            messages: app
+                .chat_messages
+                .iter()
+                .map(|m| crate::session::SavedChatMessage {
+                    role: match m.role {
+                        crate::app::ChatRole::User => "user".to_string(),
+                        crate::app::ChatRole::Assistant => "assistant".to_string(),
+                        crate::app::ChatRole::Tool => "tool".to_string(),
+                        crate::app::ChatRole::Thinking => "thinking".to_string(),
+                        crate::app::ChatRole::Error => "error".to_string(),
+                        crate::app::ChatRole::System => "system".to_string(),
+                    },
+                    content: m.content.clone(),
+                    timestamp: m.timestamp.clone(),
+                })
+                .collect(),
+            tokens: app.session_tokens,
+            cost: app.session_cost,
+        };
+        let _ = crate::session::save_session(&saved);
+    }
+
+    app.chat_messages.clear();
+    app.chat_scroll = 0;
+    "Conversation cleared. Prior session auto-saved to ~/.cortex/sessions/".to_string()
+}
+
+fn handle_sessions_command() -> String {
+    match crate::session::list_sessions() {
+        Ok(sessions) => {
+            if sessions.is_empty() {
+                "No saved sessions found in ~/.cortex/sessions. Use '/resume <id>' after working on a task.".to_string()
+            } else {
+                let mut out = format!("── Saved Sessions ({}) ──\n", sessions.len());
+                for s in sessions.iter().take(10) {
+                    let title = if s.title.len() > 34 {
+                        format!("{}...", &s.title[..31])
+                    } else {
+                        s.title.clone()
+                    };
+                    out.push_str(&format!(
+                        "• {:<24} | {:<3} msgs | ${:<6.4} | {}\n",
+                        s.id,
+                        s.messages.len(),
+                        s.cost,
+                        title
+                    ));
+                }
+                out.push_str("\nType '/resume <id>' to restore any session.");
+                out
+            }
+        }
+        Err(e) => format!("Failed to read sessions: {}", e),
+    }
+}
+
+fn handle_resume_command(app: &mut App, id: &str) -> String {
+    if id.trim().is_empty() {
+        return "Usage: /resume <session_id> (type '/sessions' to view available IDs)".to_string();
+    }
+    match crate::session::load_session(id) {
+        Ok(Some(session)) => {
+            app.chat_messages.clear();
+            for msg in &session.messages {
+                let role = match msg.role.as_str() {
+                    "user" => crate::app::ChatRole::User,
+                    "assistant" => crate::app::ChatRole::Assistant,
+                    "tool" => crate::app::ChatRole::Tool,
+                    "thinking" => crate::app::ChatRole::Thinking,
+                    "error" => crate::app::ChatRole::Error,
+                    _ => crate::app::ChatRole::System,
+                };
+                app.chat_messages.push(crate::app::ChatMessageItem {
+                    role,
+                    content: msg.content.clone(),
+                    timestamp: msg.timestamp.clone(),
+                    is_expanded: false,
+                });
+            }
+            app.session_tokens = session.tokens;
+            app.session_cost = session.cost;
+            format!(
+                "✓ Restored session '{}' with {} messages (Model: {}).",
+                session.id,
+                session.messages.len(),
+                session.model
+            )
+        }
+        Ok(None) => format!(
+            "Error: Session '{}' not found. Type '/sessions' to list.",
+            id
+        ),
+        Err(e) => format!("Failed to load session: {}", e),
+    }
 }
 
 fn handle_tasks_command(app: &App) -> String {
@@ -1047,6 +1417,10 @@ mod tests {
             },
         );
         assert!(set_res.contains("Switched") || set_res.contains("Configured"));
+
+        // Settings
+        let settings_resp = execute_command(&mut app, SlashCommand::Settings { args: vec![] });
+        assert!(settings_resp.contains("Cortex Settings"));
 
         // Quit
         assert!(!app.should_quit);

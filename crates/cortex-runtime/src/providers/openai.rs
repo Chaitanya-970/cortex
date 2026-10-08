@@ -27,10 +27,14 @@ impl OpenAiCompatibleProvider {
         base_url: Option<String>,
     ) -> Self {
         let model_str = model.into();
-        let base = base_url
+        let mut base = base_url
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string())
             .trim_end_matches('/')
             .to_string();
+
+        if base.contains("generativelanguage.googleapis.com") && !base.ends_with("/openai") {
+            base.push_str("/openai");
+        }
 
         let provider_name =
             if base.contains("localhost") || base.contains("127.0.0.1") || base.contains("11434") {
@@ -41,6 +45,8 @@ impl OpenAiCompatibleProvider {
                 "deepseek"
             } else if base.contains("groq") {
                 "groq"
+            } else if base.contains("generativelanguage.googleapis.com") {
+                "google"
             } else {
                 "openai"
             };
@@ -253,6 +259,137 @@ impl ModelProvider for OpenAiCompatibleProvider {
             .to_string();
 
         Ok(ModelOutput::FinalAnswer(content))
+    }
+
+    fn stream(
+        &self,
+        context: &AgentContext,
+        on_token: &mut dyn FnMut(&str) -> Result<()>,
+    ) -> Result<ModelOutput> {
+        let messages = self.format_messages(context);
+        let tools = self.format_tools(context);
+
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "messages": messages,
+            "stream": true,
+        });
+
+        if !tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(tools);
+            body["tool_choice"] = serde_json::Value::String("auto".to_string());
+        }
+
+        let endpoint = format!("{}/chat/completions", self.base_url);
+        let mut req = ureq::post(&endpoint)
+            .timeout(Duration::from_secs(self.timeout_secs))
+            .set("Content-Type", "application/json");
+
+        if let Some(key) = &self.api_key {
+            req = req.set("Authorization", &format!("Bearer {}", key));
+        }
+
+        let response = match req.send_json(body) {
+            Ok(resp) => resp,
+            Err(_) => {
+                // If stream request fails to initiate, fallback to non-streaming generate
+                return self.generate(context);
+            }
+        };
+
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(response.into_reader());
+        let mut accumulated_content = String::new();
+        let mut tool_calls_builder: Vec<(String, String, String)> = Vec::new();
+
+        for line_res in reader.lines() {
+            let line = match line_res {
+                Ok(l) => l,
+                Err(_) => break,
+            };
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some(data) = trimmed.strip_prefix("data: ") {
+                let data = data.trim();
+                if data == "[DONE]" {
+                    break;
+                }
+                if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
+                        if let Some(choice) = choices.first() {
+                            if let Some(delta) = choice.get("delta") {
+                                if let Some(content) = delta.get("content").and_then(|c| c.as_str())
+                                {
+                                    if !content.is_empty() {
+                                        accumulated_content.push_str(content);
+                                        let _ = on_token(content);
+                                    }
+                                }
+                                if let Some(tc_array) =
+                                    delta.get("tool_calls").and_then(|tc| tc.as_array())
+                                {
+                                    for tc in tc_array {
+                                        let index =
+                                            tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0)
+                                                as usize;
+                                        while tool_calls_builder.len() <= index {
+                                            tool_calls_builder.push((
+                                                String::new(),
+                                                String::new(),
+                                                String::new(),
+                                            ));
+                                        }
+                                        if let Some(id) = tc.get("id").and_then(|s| s.as_str()) {
+                                            tool_calls_builder[index].0 = id.to_string();
+                                        }
+                                        if let Some(func) = tc.get("function") {
+                                            if let Some(name) =
+                                                func.get("name").and_then(|s| s.as_str())
+                                            {
+                                                tool_calls_builder[index].1.push_str(name);
+                                            }
+                                            if let Some(args) =
+                                                func.get("arguments").and_then(|s| s.as_str())
+                                            {
+                                                tool_calls_builder[index].2.push_str(args);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !tool_calls_builder.is_empty() {
+            let mut parsed_calls = Vec::new();
+            for (i, (id, name, args_str)) in tool_calls_builder.into_iter().enumerate() {
+                if name.is_empty() {
+                    continue;
+                }
+                let call_id = if id.is_empty() {
+                    format!("call_{}", i)
+                } else {
+                    id
+                };
+                let args: serde_json::Value =
+                    serde_json::from_str(&args_str).unwrap_or_else(|_| serde_json::json!({}));
+                parsed_calls.push(ToolCall::new(call_id, name, args));
+            }
+            if !parsed_calls.is_empty() {
+                return Ok(ModelOutput::ToolCalls(parsed_calls));
+            }
+        }
+
+        if !accumulated_content.is_empty() {
+            return Ok(ModelOutput::FinalAnswer(accumulated_content));
+        }
+
+        self.generate(context)
     }
 
     fn last_usage(&self) -> Option<ModelUsage> {

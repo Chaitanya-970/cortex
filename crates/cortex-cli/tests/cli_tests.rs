@@ -24,6 +24,52 @@ fn test_cli_status_subcommand() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Workspace & Architecture Bootstrap"));
+    assert!(stdout.contains("Settings:"));
+}
+
+#[test]
+fn test_cli_settings_auto_creation_and_config() {
+    let tmp_home = std::env::temp_dir().join(format!("cortex_home_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_home);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_HOME", &tmp_home)
+        .arg("status")
+        .output()
+        .expect("Failed to execute cortex binary");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Settings:"));
+
+    // Verify settings.json was automatically created in the home folder
+    let settings_file = tmp_home.join("settings.json");
+    assert!(settings_file.is_file());
+
+    let content = std::fs::read_to_string(&settings_file).unwrap();
+    assert!(content.contains("\"model\": \"gpt-4o-mini\""));
+
+    // Configure a custom model, url, and api key in settings.json
+    let custom_settings = r#"{
+        "model": "my-custom-model",
+        "url": "http://localhost:8000/v1",
+        "api_key": "sk-custom-123"
+    }"#;
+    std::fs::write(&settings_file, custom_settings).unwrap();
+
+    let output2 = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_HOME", &tmp_home)
+        .arg("status")
+        .output()
+        .expect("Failed to execute cortex binary");
+
+    assert!(output2.status.success());
+    let stdout2 = String::from_utf8_lossy(&output2.stdout);
+    assert!(stdout2.contains("my-custom-model"));
+    assert!(stdout2.contains("http://localhost:8000/v1"));
+    assert!(stdout2.contains("API Key: Configured"));
+
+    let _ = std::fs::remove_dir_all(&tmp_home);
 }
 
 #[test]
@@ -187,7 +233,13 @@ fn test_cli_run_help() {
 
 #[test]
 fn test_cli_run_unconfigured_error_guidance() {
+    let tmp_dir =
+        std::env::temp_dir().join(format!("cortex_unconfigured_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
     let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_HOME", &tmp_dir)
         .env_remove("OPENAI_API_KEY")
         .env_remove("ANTHROPIC_API_KEY")
         .env_remove("CORTEX_API_KEY")
@@ -199,4 +251,6 @@ fn test_cli_run_unconfigured_error_guidance() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("not configured"));
     assert!(stderr.contains("OPENAI_API_KEY"));
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
 }

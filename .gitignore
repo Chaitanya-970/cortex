@@ -22,6 +22,8 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+.cortex/
+*.db
 
 # Test & coverage artifacts
 cov/
@@ -29,7 +31,6 @@ coverage/
 *.profraw
 *.profdata
 lcov.info
-
 
 # Document files
 *.docx

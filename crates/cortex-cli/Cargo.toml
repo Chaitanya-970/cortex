@@ -13,6 +13,10 @@ publish.workspace = true
 name = "cortex"
 path = "src/main.rs"
 
+[[bin]]
+name = "agent"
+path = "src/bin/agent.rs"
+
 [dependencies]
 cortex-core = { workspace = true }
 cortex-runtime = { workspace = true }

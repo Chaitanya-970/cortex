@@ -35,17 +35,23 @@ pub fn create_model_provider(
     api_key: Option<String>,
     base_url: Option<String>,
 ) -> Result<Arc<dyn ModelProvider>> {
+    let settings = cortex_core::settings::UserSettings::load_or_default();
     let lower = model.to_lowercase();
 
     if lower.starts_with("claude") {
         let key = api_key
             .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-            .or_else(|| std::env::var("anthropic_api_key").ok());
-        let url = base_url.unwrap_or_else(|| "https://api.anthropic.com/v1".to_string());
+            .or_else(|| std::env::var("anthropic_api_key").ok())
+            .or_else(|| settings.resolve_api_key(model));
+        let url = base_url
+            .or_else(|| settings.resolve_base_url(model))
+            .unwrap_or_else(|| "https://api.anthropic.com/v1".to_string());
         Ok(Arc::new(AnthropicProvider::new(model, key, Some(url))))
     } else if lower.starts_with("ollama/") {
         let stripped = model.strip_prefix("ollama/").unwrap_or(model);
-        let url = base_url.unwrap_or_else(|| "http://localhost:11434/v1".to_string());
+        let url = base_url
+            .or_else(|| settings.resolve_base_url(model))
+            .unwrap_or_else(|| "http://localhost:11434/v1".to_string());
         Ok(Arc::new(OpenAiCompatibleProvider::new(
             stripped,
             None,
@@ -54,12 +60,14 @@ pub fn create_model_provider(
     } else {
         let key = api_key
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-            .or_else(|| std::env::var("openai_api_key").ok());
+            .or_else(|| std::env::var("openai_api_key").ok())
+            .or_else(|| settings.resolve_api_key(model));
         let url = base_url
             .or_else(|| std::env::var("OPENAI_API_BASE").ok())
             .or_else(|| std::env::var("openai_api_base").ok())
             .or_else(|| std::env::var("CORTEX_API_BASE").ok())
-            .or_else(|| std::env::var("cortex_api_base").ok());
+            .or_else(|| std::env::var("cortex_api_base").ok())
+            .or_else(|| settings.resolve_base_url(model));
         Ok(Arc::new(OpenAiCompatibleProvider::new(model, key, url)))
     }
 }
