@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### AgentManager & Agent Lifecycle State Machine
+
+#### Added
+- Thread-safe `AgentManager` in `cortex-runtime` for persistent agent worker registration, execution, and lifecycle coordination.
+- `AgentState` lifecycle state machine with explicit validated transitions: `Created`, `Ready`, `Running`, `Paused`, `Stopped`, and `Failed`.
+- Persistent agent worker representation (`Agent`, `AgentManifest`, `AgentModelConfig`, `AgentPermissions`).
+- Lifecycle management operations: `create`, `start`, `pause`, `resume`, `stop`, `restart`, `inspect`, `list`, and `remove`.
+- Real-time event streaming and subscription channel for structured `AgentLifecycleEvent` records (`AgentCreated`, `AgentStarted`, `AgentPaused`, `AgentResumed`, `AgentStopped`, `AgentFailed`).
+- Comprehensive unit and integration test suites covering valid transitions, prohibited state violations, concurrent multi-agent executions, and event streams.
+
 ### Model Context Protocol (MCP) Client & Tool Discovery
 
 #### Added
