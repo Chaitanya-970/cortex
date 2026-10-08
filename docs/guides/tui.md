@@ -52,7 +52,7 @@ CORTEX_DB_PATH=/path/to/cortex.db cortex tui
 
 ## Views and Navigation
 
-The control plane contains 6 primary views accessible via numeric keys (`1` through `6`) or `Tab` / `Shift+Tab`:
+The control plane contains 8 primary views accessible via numeric keys (`1` through `8`) or `Tab` / `Shift+Tab`:
 
 ### 1. Dashboard (`1`)
 - **Metric Tiles**: Total runs, completed runs, failure/abort counts, and active worker count.
@@ -80,21 +80,40 @@ The control plane contains 6 primary views accessible via numeric keys (`1` thro
 - **Curated Tasks**: Interactive browser of benchmark evaluation tasks across suites (`coding`, `refactor`, `cli`).
 - Inspect task prompts, test files, and verification commands.
 
+### 7. Agent Chat (`7`)
+- **Interactive Autonomous Agent Dispatch**: Directly submit instructions and task prompts from the terminal UI.
+- **Real-Time Stream**: Live view of tool invocations, model reasoning phases, and final answers as the agent operates in the background.
+- **Live Cancellation**: Press `Esc` while an agent is executing to gracefully terminate the run.
+
+### 8. Model Portals (`8`)
+- **Provider & Model Configuration**: Manage inference endpoints including OpenAI (`gpt-4o-mini`, `gpt-4o`), Anthropic Claude (`claude-3-5-sonnet`, `claude-3-5-haiku`), local Ollama (`ollama/llama3.1`, `ollama/qwen2.5-coder`), DeepSeek (`deepseek-chat`), and custom OpenAI-compatible endpoints.
+- **Credential & Endpoint Management**: Press `e` to set custom API keys, `b` to configure base endpoint URLs, `a` to create new portals, and `Space` / `Enter` to activate the target model for agent execution.
+- **Validation**: Press `t` to test configuration and verify connectivity.
+
 ---
 
 ## Keyboard Controls
 
-| Key | Action |
-|---|---|
-| `Tab` | Cycle to next tab |
-| `Shift+Tab` / `BackTab` | Cycle to previous tab |
-| `1` ..= `6` | Jump directly to tab 1 through 6 |
-| `↑` / `k` | Move selection up in list/table |
-| `↓` / `j` | Move selection down in list/table |
-| `Enter` | Inspect selected run / drill down |
-| `r` | Refresh state from SQLite database |
-| `Esc` | Return to Dashboard |
-| `q` / `Ctrl+C` | Cleanly exit TUI |
+| Key | Context | Action |
+|---|---|---|
+| `Tab` | Global | Cycle to next tab |
+| `Shift+Tab` / `BackTab` | Global | Cycle to previous tab |
+| `1` ..= `8` | Global / Normal | Jump directly to tab 1 through 8 |
+| `↑` / `k` | Normal | Move selection up in list/table |
+| `↓` / `j` | Normal | Move selection down in list/table |
+| `Enter` | Normal | Inspect selected run / activate portal |
+| `r` | Normal | Refresh state from SQLite database |
+| `Esc` | Normal | Return to Dashboard |
+| `q` / `Ctrl+C` | Global | Cleanly exit TUI |
+| `Enter` | Chat Tab | Dispatch agent with current input prompt |
+| `Esc` | Chat Tab | Cancel running agent / clear input prompt |
+| `PageUp` / `PageDown` | Chat Tab | Scroll chat message log |
+| `Space` / `Enter` | Portals Tab | Set selected portal as active for agent dispatch |
+| `a` | Portals Tab | Start interactive wizard to add a new portal |
+| `e` | Portals Tab | Edit custom API key for selected portal |
+| `b` | Portals Tab | Edit base endpoint URL for selected portal |
+| `d` | Portals Tab | Delete selected portal |
+| `t` | Portals Tab | Test portal credentials and configuration |
 
 ---
 
