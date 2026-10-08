@@ -1,0 +1,118 @@
+name: Auto Assign Issue
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+  reactions: write
+
+jobs:
+  assign:
+    if: ${{ !github.event.issue.pull_request && (contains(github.event.comment.body, '.take') || contains(github.event.comment.body, '.TAKE') || contains(github.event.comment.body, '.Take') || contains(github.event.comment.body, '/take') || contains(github.event.comment.body, '/TAKE') || contains(github.event.comment.body, '/Take')) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto-assign issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Ignore bot comments to prevent feedback loops
+            if (context.payload.comment.user.type === 'Bot') {
+              return;
+            }
+
+            const commentBody = context.payload.comment.body.trim().toLowerCase();
+            const commentUser = context.payload.comment.user.login;
+            const issueNumber = context.payload.issue.number;
+            const issueAssignees = context.payload.issue.assignees || [];
+            const issueState = context.payload.issue.state;
+
+            // Match .take or /take as an exact command or start of message
+            const isTakeCommand = commentBody === '.take' ||
+              commentBody.startsWith('.take ') ||
+              commentBody.startsWith('.take\n') ||
+              commentBody.startsWith('.take\r') ||
+              commentBody === '/take' ||
+              commentBody.startsWith('/take ') ||
+              commentBody.startsWith('/take\n') ||
+              commentBody.startsWith('/take\r');
+
+            if (!isTakeCommand) {
+              return;
+            }
+
+            // Do not assign closed issues
+            if (issueState === 'closed') {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `@${commentUser} this issue is closed and cannot be assigned.`,
+              });
+              return;
+            }
+
+            // Check if already assigned
+            if (issueAssignees.length > 0) {
+              const alreadyAssigned = issueAssignees.some(a => a.login === commentUser);
+              if (alreadyAssigned) {
+                await github.rest.reactions.createForIssueComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: context.payload.comment.id,
+                  content: '+1',
+                });
+                return;
+              }
+
+              const assigneeList = issueAssignees.map(a => `@${a.login}`).join(', ');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `This issue is already assigned to ${assigneeList}. Please coordinate with them or a maintainer if you would like to collaborate.`,
+              });
+              return;
+            }
+
+            try {
+              // Assign issue to commenter
+              const assignResult = await github.rest.issues.addAssignees({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                assignees: [commentUser],
+              });
+
+              // Check if assignment took effect
+              const successfullyAssigned = assignResult.data.assignees &&
+                assignResult.data.assignees.some(a => a.login === commentUser);
+
+              if (successfullyAssigned) {
+                // Acknowledge with rocket reaction
+                await github.rest.reactions.createForIssueComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: context.payload.comment.id,
+                  content: 'rocket',
+                });
+
+                // Post confirmation comment with links
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: `Assigned @${commentUser} to this issue. Please review [CONTRIBUTING.md](CONTRIBUTING.md) for branch naming and commit conventions before submitting your pull request.`,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: `@${commentUser} could not be automatically assigned. A maintainer will assign you manually.`,
+                });
+              }
+            } catch (error) {
+              core.setFailed(`Failed to assign issue: ${error.message}`);
+            }

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### GitHub Automation & Workflows
+
+#### Added
+- Automated issue assignment workflow (`.github/workflows/auto-assign.yml`) triggered when contributors comment `.take` on open issues.
+
 ### Live Model Providers & Autonomous CLI Harness
 
 #### Added

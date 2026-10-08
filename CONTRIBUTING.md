@@ -13,7 +13,7 @@ Every non-trivial code change should begin with an issue:
 1. **Search First**: Check existing GitHub Issues and Pull Requests to avoid duplicate work.
 2. **Open an Issue**: File a bug report, feature request, or task describing the problem and proposed design before writing code.
 3. **Wait for Alignment**: Discuss substantial architectural additions with maintainers to ensure alignment with our roadmap.
-4. **Claiming Work**: Comment on the issue to let others know you are actively working on it.
+4. **Claiming Work**: Comment `.take` on the issue. The automation bot will automatically assign the issue to you.
 
 ---
 
