@@ -1,5 +1,7 @@
 //! Rendering implementation for all TUI screens and control widgets.
 
+#![allow(dead_code)]
+
 use crate::app::{ActiveTab, App, ChatRole, PortalField, PortalInputMode};
 use cortex_core::ExecutionEvent;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -9,32 +11,14 @@ use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, 
 use ratatui::Frame;
 
 /// Render the complete user interface for the current frame.
+///
+/// In Cortex's modern CLI architecture (inspired by Claude Code, Cursor CLI, and Gemini CLI),
+/// the interface is a dedicated conversational harness with slash commands and zero top tabs.
 pub fn render(frame: &mut Frame, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Header & Tabs
-            Constraint::Min(12),   // Main content
-            Constraint::Length(3), // Footer & Keybindings
-        ])
-        .split(frame.area());
-
-    render_header(frame, app, chunks[0]);
-
-    match app.active_tab {
-        ActiveTab::Dashboard => render_dashboard(frame, app, chunks[1]),
-        ActiveTab::Agents => render_agents(frame, app, chunks[1]),
-        ActiveTab::ActiveRun => render_active_run(frame, app, chunks[1]),
-        ActiveTab::Events => render_events(frame, app, chunks[1]),
-        ActiveTab::History => render_history(frame, app, chunks[1]),
-        ActiveTab::Tasks => render_tasks(frame, app, chunks[1]),
-        ActiveTab::Chat => render_chat(frame, app, chunks[1]),
-        ActiveTab::Portals => render_portals(frame, app, chunks[1]),
-    }
-
-    render_footer(frame, app, chunks[2]);
+    render_chat(frame, app, frame.area());
 }
 
+#[allow(dead_code)]
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let titles: Vec<Line> = ActiveTab::all()
         .iter()
@@ -1263,7 +1247,19 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default()
                     .fg(input_border_color)
                     .add_modifier(Modifier::BOLD),
-            ),
+            )
+            .title_bottom(Line::from(vec![
+                Span::styled(" Enter", Style::default().fg(Color::Yellow)),
+                Span::raw(": Send │ "),
+                Span::styled("Tab", Style::default().fg(Color::Yellow)),
+                Span::raw(": Complete │ "),
+                Span::styled("Ctrl+T", Style::default().fg(Color::Yellow)),
+                Span::raw(": Thinking │ "),
+                Span::styled("Esc", Style::default().fg(Color::Yellow)),
+                Span::raw(": Clear │ "),
+                Span::styled("Ctrl+C", Style::default().fg(Color::Yellow)),
+                Span::raw(": Exit "),
+            ])),
     );
     frame.render_widget(input_widget, chunks[2]);
 }

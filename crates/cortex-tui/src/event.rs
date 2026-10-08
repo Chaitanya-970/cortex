@@ -37,18 +37,26 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
 
         match key.code {
             KeyCode::Tab => {
-                app.next_tab();
+                if app.chat_input.starts_with('/') {
+                    if let Some(completed) = crate::commands::autocomplete_command(&app.chat_input)
+                    {
+                        app.chat_input = completed;
+                        app.chat_cursor = app.chat_input.len();
+                    }
+                } else if app.chat_input.is_empty() {
+                    app.chat_input = "/".to_string();
+                    app.chat_cursor = 1;
+                } else {
+                    app.chat_input_insert(' ');
+                    app.chat_input_insert(' ');
+                }
             }
-            KeyCode::BackTab => {
-                app.prev_tab();
-            }
+            KeyCode::BackTab => {}
             KeyCode::Esc => {
                 if app.chat_is_running {
                     app.cancel_chat_agent();
                 } else if !app.chat_input.is_empty() {
                     app.chat_input_clear();
-                } else {
-                    app.set_tab(ActiveTab::Dashboard);
                 }
             }
             KeyCode::Enter => {
@@ -234,39 +242,41 @@ mod tests {
         let mut app = App::new(None);
         assert!(!app.should_quit);
 
-        handle_key(&mut app, make_key(KeyCode::Char('q')));
+        handle_key(&mut app, make_ctrl_key(KeyCode::Char('c')));
         assert!(app.should_quit);
 
         let mut app2 = App::new(None);
-        handle_key(&mut app2, make_ctrl_key(KeyCode::Char('c')));
+        app2.set_tab(ActiveTab::Dashboard);
+        handle_key(&mut app2, make_key(KeyCode::Char('q')));
         assert!(app2.should_quit);
     }
 
     #[test]
     fn test_tab_keys() {
         let mut app = App::new(None);
-        assert_eq!(app.active_tab, ActiveTab::Dashboard);
-
-        handle_key(&mut app, make_key(KeyCode::Tab));
-        assert_eq!(app.active_tab, ActiveTab::Agents);
-
-        handle_key(&mut app, make_key(KeyCode::BackTab));
-        assert_eq!(app.active_tab, ActiveTab::Dashboard);
-
-        handle_key(&mut app, make_key(KeyCode::Char('7')));
         assert_eq!(app.active_tab, ActiveTab::Chat);
 
+        // Tab in empty chat inserts "/"
         handle_key(&mut app, make_key(KeyCode::Tab));
-        assert_eq!(app.active_tab, ActiveTab::Portals);
+        assert_eq!(app.chat_input, "/");
 
-        handle_key(&mut app, make_key(KeyCode::Esc));
-        assert_eq!(app.active_tab, ActiveTab::Dashboard);
+        // Tab autocompletes /m to /model
+        app.chat_input = "/m".to_string();
+        app.chat_cursor = 2;
+        handle_key(&mut app, make_key(KeyCode::Tab));
+        assert_eq!(app.chat_input, "/model ");
+
+        // Also test legacy overview tab cycling when active_tab is Dashboard
+        let mut app2 = App::new(None);
+        app2.set_tab(ActiveTab::Dashboard);
+        handle_key(&mut app2, make_key(KeyCode::Tab));
+        assert_eq!(app2.active_tab, ActiveTab::Agents);
     }
 
     #[test]
     fn test_chat_tab_input_handling() {
         let mut app = App::new(None);
-        app.set_tab(ActiveTab::Chat);
+        assert_eq!(app.active_tab, ActiveTab::Chat);
 
         handle_key(&mut app, make_key(KeyCode::Char('h')));
         handle_key(&mut app, make_key(KeyCode::Char('e')));
@@ -282,8 +292,9 @@ mod tests {
         assert_eq!(app.chat_input, "");
         assert_eq!(app.active_tab, ActiveTab::Chat);
 
+        // Esc on empty input stays in chat
         handle_key(&mut app, make_key(KeyCode::Esc));
-        assert_eq!(app.active_tab, ActiveTab::Dashboard);
+        assert_eq!(app.active_tab, ActiveTab::Chat);
     }
 
     #[test]

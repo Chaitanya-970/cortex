@@ -31,6 +31,14 @@ pub enum SlashCommand {
     Status,
     /// Display recent execution runs from SQLite storage.
     Runs,
+    /// Benchmark evaluation tasks available in the test harness.
+    Tasks,
+    /// Overall runtime metrics and dashboard summary card.
+    Dashboard,
+    /// Environment diagnostics, API keys, and system doctor check.
+    Doctor,
+    /// Token usage and cost breakdown summary.
+    Cost,
     /// Toggle or set thinking section expansion (`/thinking`, `/thinking on`, `/thinking off`).
     Thinking {
         /// Optional argument: `Some("on")`, `Some("off")`, or `None` for toggle.
@@ -71,6 +79,10 @@ pub fn parse_command(input: &str) -> Option<SlashCommand> {
         "diff" => Some(SlashCommand::Diff),
         "status" | "info" => Some(SlashCommand::Status),
         "runs" | "history" => Some(SlashCommand::Runs),
+        "tasks" | "bench" => Some(SlashCommand::Tasks),
+        "dashboard" | "metrics" => Some(SlashCommand::Dashboard),
+        "doctor" | "check" => Some(SlashCommand::Doctor),
+        "cost" => Some(SlashCommand::Cost),
         "thinking" | "think" | "thought" => {
             let arg = args.first().cloned();
             Some(SlashCommand::Thinking { arg })
@@ -94,6 +106,10 @@ pub fn execute_command(app: &mut App, command: SlashCommand) -> String {
         SlashCommand::Diff => handle_diff_command(),
         SlashCommand::Status => handle_status_command(app),
         SlashCommand::Runs => handle_runs_command(app),
+        SlashCommand::Tasks => handle_tasks_command(app),
+        SlashCommand::Dashboard => handle_dashboard_command(app),
+        SlashCommand::Doctor => handle_doctor_command(app),
+        SlashCommand::Cost => handle_cost_command(app),
         SlashCommand::Thinking { arg } => handle_thinking_command(app, arg),
         SlashCommand::Clear => {
             app.chat_messages.clear();
@@ -136,11 +152,15 @@ fn format_help() -> String {
 │    /agent pause <id>           Transition persistent agent to PAUSED         │
 │    /agent add <id> <name> <role> Register a new persistent agent worker     │
 │                                                                          │
-│  🛠️ WORKSPACE & TOOLS                                                     │
+│  🛠️ WORKSPACE, TOOLS & BENCHMARKS                                         │
 │    /tools                      List registered sandbox tools & permissions   │
 │    /diff                       View git diff of uncommitted workspace changes│
 │    /status                     Runtime diagnostics, SQLite and memory status │
 │    /runs                       Show 5 most recent execution runs and metrics │
+│    /tasks                      List benchmark evaluation tasks in suite      │
+│    /dashboard                  Runtime metrics, completed runs & success card│
+│    /doctor                     Check API keys, git status & health checks    │
+│    /cost                       Display token usage & cost summary            │
 │                                                                          │
 │  ⚡ HARNESS & DISPLAY CONTROLS                                            │
 │    /thinking [on|off]          Toggle or set expandable thinking trace view  │
@@ -151,7 +171,8 @@ fn format_help() -> String {
 │  Keyboard Shortcuts:                                                     │
 │    Enter: Send prompt / command   Ctrl+T: Toggle thinking expanded/collapsed │
 │    ↑/↓: Browse command history    PageUp/PageDown: Scroll chat stream        │
-│    Tab: Switch control plane tabs Esc: Cancel running agent / clear input    │
+│    Tab: Autocomplete commands     Esc: Cancel running agent / clear input    │
+│    Ctrl+C: Quit harness           Ctrl+U: Clear input line                   │
 └──────────────────────────────────────────────────────────────────────────┘"#
         .to_string()
 }
@@ -730,6 +751,190 @@ fn handle_compact_command(app: &mut App) -> String {
     )
 }
 
+fn handle_tasks_command(app: &App) -> String {
+    let mut out = String::new();
+    out.push_str("┌── 📋 BENCHMARK EVALUATION TASKS ────────────────────────────────────────┐\n");
+    if app.tasks.is_empty() {
+        out.push_str(
+            "│ No benchmark tasks loaded in app memory.                                │\n",
+        );
+    } else {
+        for t in app.tasks.iter().take(8) {
+            out.push_str(&format!(
+                "│  • [{:<18}] {:<48}│\n",
+                t.id,
+                t.name.chars().take(48).collect::<String>()
+            ));
+        }
+    }
+    out.push_str("└────────────────────────────────────────────────────────────────────────┘\n");
+    out.push_str("Run benchmark suites via CLI: 'cortex bench run <task-id>'");
+    out
+}
+
+fn handle_dashboard_command(app: &App) -> String {
+    let total_runs = app.runs.len();
+    let completed = app.runs.iter().filter(|r| r.status == "completed").count();
+    let failed = app.runs.iter().filter(|r| r.status == "failed").count();
+    let tokens: u64 = app.runs.iter().map(|r| r.tokens_total as u64).sum();
+    let cost: f64 = app.runs.iter().map(|r| r.estimated_cost_usd).sum();
+    let active_agents = app.agents.iter().filter(|a| a.status == "Running").count();
+
+    format!(
+        "┌── 📊 CORTEX RUNTIME DASHBOARD ─────────────────────────────────────────┐\n\
+         │ Total Runs     : {:<52}│\n\
+         │ Completed Runs : {:<52}│\n\
+         │ Failed Runs    : {:<52}│\n\
+         │ Total Tokens   : {:<52}│\n\
+         │ Est. Total Cost: ${:<51.4}│\n\
+         │ Active Agents  : {:<52}│\n\
+         │ SQLite Store   : {:<52}│\n\
+         └────────────────────────────────────────────────────────────────────────┘",
+        total_runs,
+        completed,
+        failed,
+        tokens,
+        cost,
+        format!("{} running / {} total", active_agents, app.agents.len()),
+        if app.store.is_some() {
+            "Connected"
+        } else {
+            "In-Memory / Unconnected"
+        },
+    )
+}
+
+fn handle_cost_command(app: &App) -> String {
+    let portal = app.active_portal();
+    let tokens: u64 = app.runs.iter().map(|r| r.tokens_total as u64).sum();
+    let cost: f64 = app.runs.iter().map(|r| r.estimated_cost_usd).sum();
+
+    format!(
+        "┌── 💰 TOKEN USAGE & COST ESTIMATE ──────────────────────────────────────┐\n\
+         │ Active Model   : {:<52}│\n\
+         │ Total Tokens   : {:<52}│\n\
+         │ Est. Run Cost  : ${:<51.4}│\n\
+         │ Model Pricing  : {:<52}│\n\
+         └────────────────────────────────────────────────────────────────────────┘\n\
+         See '/model info' for context window and token rates.",
+        portal.model_name, tokens, cost, "Configured via active portal"
+    )
+}
+
+fn handle_doctor_command(app: &App) -> String {
+    let portal = app.active_portal();
+    let openai_set = std::env::var("OPENAI_API_KEY").is_ok();
+    let anthropic_set = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    let git_repo = std::path::Path::new(".git").exists();
+    let db_ok = app.store.is_some();
+
+    format!(
+        "┌── 🩺 CORTEX SYSTEM DOCTOR & ENVIRONMENT CHECK ─────────────────────────┐\n\
+         │ Git Repository     : {:<50}│\n\
+         │ SQLite Storage     : {:<50}│\n\
+         │ Active Portal      : {:<50}│\n\
+         │ OPENAI_API_KEY     : {:<50}│\n\
+         │ ANTHROPIC_API_KEY  : {:<50}│\n\
+         │ Runtime Engine     : {:<50}│\n\
+         └────────────────────────────────────────────────────────────────────────┘",
+        if git_repo {
+            "✔ Initialized"
+        } else {
+            "✖ Not found (.git missing)"
+        },
+        if db_ok {
+            "✔ Connected"
+        } else {
+            "⚠ Memory fallback"
+        },
+        format!("{} ({})", portal.name, portal.provider_kind),
+        if openai_set {
+            "✔ Configured"
+        } else {
+            "○ Not set"
+        },
+        if anthropic_set {
+            "✔ Configured"
+        } else {
+            "○ Not set"
+        },
+        format!("Cortex v{}", VERSION),
+    )
+}
+
+/// Curated primary slash commands for autocomplete.
+pub const ALL_COMMANDS: &[&str] = &[
+    "/agents",
+    "/clear",
+    "/compact",
+    "/cost",
+    "/dashboard",
+    "/diff",
+    "/doctor",
+    "/help",
+    "/model",
+    "/portal",
+    "/quit",
+    "/runs",
+    "/status",
+    "/tasks",
+    "/thinking",
+    "/tools",
+];
+
+const MODEL_SUBCOMMANDS: &[&str] = &["info", "list", "set"];
+const PORTAL_SUBCOMMANDS: &[&str] = &["add", "list", "set-key", "set-url", "test", "use"];
+const AGENT_SUBCOMMANDS: &[&str] = &["add", "inspect", "list", "pause", "start", "stop"];
+const THINKING_SUBCOMMANDS: &[&str] = &["off", "on", "toggle"];
+
+/// Autocomplete a partial slash command input.
+pub fn autocomplete_command(input: &str) -> Option<String> {
+    let trimmed = input.trim_start();
+    if !trimmed.starts_with('/') {
+        return None;
+    }
+
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    if parts.is_empty() || (parts.len() == 1 && !trimmed.ends_with(' ')) {
+        let prefix = parts.first().copied().unwrap_or("/");
+        let matches: Vec<&&str> = ALL_COMMANDS
+            .iter()
+            .filter(|cmd| cmd.starts_with(prefix))
+            .collect();
+
+        if matches.len() == 1 {
+            return Some(format!("{} ", matches[0]));
+        } else if matches.len() > 1 {
+            if let Some(pos) = matches.iter().position(|cmd| **cmd == prefix) {
+                let next_idx = (pos + 1) % matches.len();
+                return Some(format!("{} ", matches[next_idx]));
+            }
+            return Some(format!("{} ", matches[0]));
+        }
+    } else if parts.len() == 2 && !trimmed.ends_with(' ') {
+        let cmd = parts[0];
+        let sub_prefix = parts[1];
+        let sub_candidates: &[&str] = match cmd {
+            "/model" | "/models" => MODEL_SUBCOMMANDS,
+            "/portal" | "/portals" => PORTAL_SUBCOMMANDS,
+            "/agent" | "/agents" => AGENT_SUBCOMMANDS,
+            "/thinking" | "/think" => THINKING_SUBCOMMANDS,
+            _ => &[],
+        };
+
+        let matches: Vec<&&str> = sub_candidates
+            .iter()
+            .filter(|sub| sub.starts_with(sub_prefix))
+            .collect();
+
+        if !matches.is_empty() {
+            return Some(format!("{} {} ", cmd, matches[0]));
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,6 +973,10 @@ mod tests {
                 arg: Some("on".to_string())
             })
         );
+        assert_eq!(parse_command("/tasks"), Some(SlashCommand::Tasks));
+        assert_eq!(parse_command("/dashboard"), Some(SlashCommand::Dashboard));
+        assert_eq!(parse_command("/doctor"), Some(SlashCommand::Doctor));
+        assert_eq!(parse_command("/cost"), Some(SlashCommand::Cost));
         assert_eq!(parse_command("/clear"), Some(SlashCommand::Clear));
         assert_eq!(parse_command("/quit"), Some(SlashCommand::Quit));
         assert_eq!(
@@ -789,6 +998,18 @@ mod tests {
 
         let status = execute_command(&mut app, SlashCommand::Status);
         assert!(status.contains("Cortex Runtime Diagnostic Status"));
+
+        let dashboard = execute_command(&mut app, SlashCommand::Dashboard);
+        assert!(dashboard.contains("RUNTIME DASHBOARD"));
+
+        let doctor = execute_command(&mut app, SlashCommand::Doctor);
+        assert!(doctor.contains("SYSTEM DOCTOR"));
+
+        let cost = execute_command(&mut app, SlashCommand::Cost);
+        assert!(cost.contains("TOKEN USAGE"));
+
+        let tasks = execute_command(&mut app, SlashCommand::Tasks);
+        assert!(tasks.contains("BENCHMARK EVALUATION TASKS"));
 
         // Toggle thinking
         let think = execute_command(&mut app, SlashCommand::Thinking { arg: None });
@@ -816,5 +1037,24 @@ mod tests {
         assert!(!app.should_quit);
         let _ = execute_command(&mut app, SlashCommand::Quit);
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_autocomplete_slash_commands() {
+        assert_eq!(autocomplete_command("/m"), Some("/model ".to_string()));
+        assert_eq!(autocomplete_command("/p"), Some("/portal ".to_string()));
+        assert_eq!(autocomplete_command("/a"), Some("/agents ".to_string()));
+        assert_eq!(autocomplete_command("/di"), Some("/diff ".to_string()));
+        assert_eq!(autocomplete_command("/q"), Some("/quit ".to_string()));
+        assert_eq!(autocomplete_command("/h"), Some("/help ".to_string()));
+        assert_eq!(
+            autocomplete_command("/model s"),
+            Some("/model set ".to_string())
+        );
+        assert_eq!(
+            autocomplete_command("/portal u"),
+            Some("/portal use ".to_string())
+        );
+        assert_eq!(autocomplete_command("regular text"), None);
     }
 }

@@ -392,7 +392,7 @@ impl App {
             .unwrap_or_else(|_| ".".to_string());
 
         let mut app = Self {
-            active_tab: ActiveTab::Dashboard,
+            active_tab: ActiveTab::Chat,
             store,
             runs: Vec::new(),
             selected_run_idx: 0,
@@ -1524,6 +1524,9 @@ mod tests {
     #[test]
     fn test_app_initialization_and_tab_cycling() {
         let mut app = App::new(None);
+        assert_eq!(app.active_tab, ActiveTab::Chat);
+
+        app.set_tab(ActiveTab::Dashboard);
         assert_eq!(app.active_tab, ActiveTab::Dashboard);
 
         app.next_tab();
