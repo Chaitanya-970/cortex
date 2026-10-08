@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Model Context Protocol (MCP) Client & Tool Discovery
+
+#### Added
+- Model Context Protocol (MCP) client implementation adhering to JSON-RPC 2.0 and the 2024-11-05 protocol contract.
+- Subprocess standard I/O transport (`StdioTransport`) and Server-Sent Events HTTP transport (`SseTransport`), with mock transport for test suites.
+- Dynamic tool discovery via `tools/list` and adaptation into the native `Tool` trait via `McpTool`, registering external tools directly into `ToolRegistry`.
+- Resource reading (`resources/list`, `resources/read`) and prompt template retrieval (`prompts/list`, `prompts/get`).
+- Multi-server configuration management via `cortex.toml` using `toml = "0.8"`, supporting namespace prefixes, subprocess environment variables, and disabled flags.
+- CLI subcommands `cortex mcp list` and `cortex mcp test <server>`, plus automatic configuration loading in `cortex run`.
+
 ### GitHub Automation & Workflows
 
 #### Added

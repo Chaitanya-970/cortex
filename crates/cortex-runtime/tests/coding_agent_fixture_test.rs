@@ -109,11 +109,17 @@ fn test_coding_agent_fixture_repair_workflow() {
         json!({ "path": "." }),
     )]));
 
+    let py_cmd = if cfg!(windows) {
+        "python test_calculator.py"
+    } else {
+        "python3 test_calculator.py"
+    };
+
     // Step 2: Agent runs test runner and observes failure
     model.queue_response(ModelOutput::ToolCalls(vec![ToolCall::new(
         "call_2",
         "shell",
-        json!({ "command": "python3 test_calculator.py" }),
+        json!({ "command": py_cmd }),
     )]));
 
     // Step 3: Agent reads the broken file to understand the bug
@@ -137,7 +143,7 @@ fn test_coding_agent_fixture_repair_workflow() {
     model.queue_response(ModelOutput::ToolCalls(vec![ToolCall::new(
         "call_5",
         "shell",
-        json!({ "command": "python3 test_calculator.py" }),
+        json!({ "command": py_cmd }),
     )]));
 
     // Step 6: Agent inspects git diff

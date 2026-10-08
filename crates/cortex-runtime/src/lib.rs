@@ -10,6 +10,7 @@
 #![deny(missing_docs)]
 
 pub mod agent;
+pub mod mcp;
 pub mod model;
 pub mod providers;
 pub mod sandbox;
@@ -21,6 +22,7 @@ pub mod workspace;
 pub use agent::{
     AgentContext, AgentLoop, AgentRunResult, CancellationToken, ChatMessage, CODING_AGENT_POLICY,
 };
+pub use mcp::{CortexConfig, McpClient, McpConfig, McpManager, McpServerConfig, McpTool};
 pub use model::{
     MockModelProvider, ModelDescriptor, ModelOutput, ModelProvider, ModelUsage,
     ReplayModelProvider, ToolCall,
