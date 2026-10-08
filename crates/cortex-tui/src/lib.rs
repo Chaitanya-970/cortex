@@ -39,6 +39,8 @@ pub fn run_tui(db_path: &Path) -> Result<()> {
 /// Run the TUI event loop on an initialized [`Terminal`] instance.
 pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<()> {
     loop {
+        app.poll_chat_updates();
+
         terminal
             .draw(|frame| ui::render(frame, &app))
             .map_err(|e| {
@@ -49,7 +51,7 @@ pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(
             break;
         }
 
-        if crossterm::event::poll(std::time::Duration::from_millis(250))
+        if crossterm::event::poll(std::time::Duration::from_millis(100))
             .map_err(|e| cortex_core::CortexError::Internal(format!("event poll error: {}", e)))?
         {
             if let Event::Key(key) = crossterm::event::read().map_err(|e| {
@@ -68,7 +70,7 @@ pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: App) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use app::ActiveTab;
+    use app::{ActiveTab, ChatMessageItem, ChatRole};
     use cortex_core::{EventRecord, ExecutionEvent, RunId};
     use cortex_runtime::storage::RunSummary;
     use ratatui::backend::TestBackend;
@@ -134,6 +136,24 @@ mod tests {
                     duration_ms: 60000,
                 },
             ),
+        ];
+
+        app.chat_messages = vec![
+            ChatMessageItem {
+                role: ChatRole::User,
+                content: "Run test suite".to_string(),
+                timestamp: "12:00:00".to_string(),
+            },
+            ChatMessageItem {
+                role: ChatRole::Tool,
+                content: "Executed shell: cargo test".to_string(),
+                timestamp: "12:00:05".to_string(),
+            },
+            ChatMessageItem {
+                role: ChatRole::Assistant,
+                content: "All tests pass successfully.".to_string(),
+                timestamp: "12:00:10".to_string(),
+            },
         ];
 
         for tab in ActiveTab::all() {

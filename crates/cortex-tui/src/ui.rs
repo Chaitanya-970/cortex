@@ -1,6 +1,6 @@
 //! Rendering implementation for all TUI screens and control widgets.
 
-use crate::app::{ActiveTab, App};
+use crate::app::{ActiveTab, App, ChatRole, PortalField, PortalInputMode};
 use cortex_core::ExecutionEvent;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -28,6 +28,8 @@ pub fn render(frame: &mut Frame, app: &App) {
         ActiveTab::Events => render_events(frame, app, chunks[1]),
         ActiveTab::History => render_history(frame, app, chunks[1]),
         ActiveTab::Tasks => render_tasks(frame, app, chunks[1]),
+        ActiveTab::Chat => render_chat(frame, app, chunks[1]),
+        ActiveTab::Portals => render_portals(frame, app, chunks[1]),
     }
 
     render_footer(frame, app, chunks[2]);
@@ -837,28 +839,722 @@ fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
+    let active_portal = app.active_portal();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Active Portal Banner
+            Constraint::Min(8),    // Conversation Stream
+            Constraint::Length(3), // Input Bar
+        ])
+        .split(area);
+
+    // 1. Top banner: Active portal & execution status
+    let status_style = if app.chat_is_running {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Green)
+    };
+    let status_str = if app.chat_is_running {
+        "AGENT RUNNING (Press Esc to cancel)"
+    } else {
+        "IDLE / READY"
+    };
+
+    let banner_text = Line::from(vec![
+        Span::styled(" Active Portal: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            &active_portal.name,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" | "),
+        Span::styled("Model: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(&active_portal.model_name, Style::default().fg(Color::White)),
+        Span::raw(" | "),
+        Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(status_str, status_style),
+        Span::raw(" | "),
+        Span::styled("Config: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            active_portal.status_text(),
+            Style::default().fg(Color::Cyan),
+        ),
+    ]);
+    let banner = Paragraph::new(banner_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" Agent Control Plane ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+    );
+    frame.render_widget(banner, chunks[0]);
+
+    // 2. Chat messages log
+    let mut text_lines: Vec<Line> = Vec::new();
+    if app.chat_messages.is_empty() {
+        text_lines.push(Line::from(""));
+        text_lines.push(Line::from(Span::styled(
+            "  No agent tasks submitted yet in this session.",
+            Style::default().fg(Color::DarkGray),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "  Type an autonomous task prompt below and press Enter to dispatch.",
+            Style::default().fg(Color::DarkGray),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "  Examples:",
+            Style::default().fg(Color::DarkGray),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "    • 'Inspect repository files and run cargo test'",
+            Style::default().fg(Color::Yellow),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "    • 'Create a new utility function in src/lib.rs with unit tests'",
+            Style::default().fg(Color::Yellow),
+        )));
+        text_lines.push(Line::from(Span::styled(
+            "    • 'Analyze git log and create a summary of recent changes'",
+            Style::default().fg(Color::Yellow),
+        )));
+    } else {
+        for msg in &app.chat_messages {
+            let (prefix_span, content_style) = match msg.role {
+                ChatRole::User => (
+                    Span::styled(
+                        format!("[{}] You: ", msg.timestamp),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Style::default().fg(Color::White),
+                ),
+                ChatRole::Assistant => (
+                    Span::styled(
+                        format!("[{}] Cortex: ", msg.timestamp),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Style::default().fg(Color::White),
+                ),
+                ChatRole::Tool => (
+                    Span::styled(
+                        format!("[{}] [Tool] ", msg.timestamp),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Style::default().fg(Color::Yellow),
+                ),
+                ChatRole::System => (
+                    Span::styled(
+                        format!("[{}] [System] ", msg.timestamp),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Style::default().fg(Color::Gray),
+                ),
+                ChatRole::Error => (
+                    Span::styled(
+                        format!("[{}] [Error] ", msg.timestamp),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                    ),
+                    Style::default().fg(Color::Red),
+                ),
+            };
+
+            for (i, line) in msg.content.lines().enumerate() {
+                if i == 0 {
+                    text_lines.push(Line::from(vec![
+                        prefix_span.clone(),
+                        Span::styled(line, content_style),
+                    ]));
+                } else {
+                    text_lines.push(Line::from(vec![
+                        Span::raw("             "),
+                        Span::styled(line, content_style),
+                    ]));
+                }
+            }
+            text_lines.push(Line::from(""));
+        }
+    }
+
+    let chat_panel = Paragraph::new(text_lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .title(" Conversation & Execution Stream ")
+                .title_style(
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+        )
+        .scroll((app.chat_scroll as u16, 0))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(chat_panel, chunks[1]);
+
+    // 3. Input bar
+    let input_title = if app.chat_is_running {
+        " Agent Working... (Press Esc to cancel) "
+    } else {
+        " Prompt / Task Input (Press Enter to dispatch agent) "
+    };
+    let input_border_color = if app.chat_is_running {
+        Color::Yellow
+    } else {
+        Color::Cyan
+    };
+    let input_line = Line::from(vec![
+        Span::styled(
+            "> ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(&app.chat_input, Style::default().fg(Color::White)),
+        Span::styled("█", Style::default().fg(Color::Cyan)),
+    ]);
+    let input_widget = Paragraph::new(input_line).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(input_border_color))
+            .title(input_title)
+            .title_style(
+                Style::default()
+                    .fg(input_border_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+    );
+    frame.render_widget(input_widget, chunks[2]);
+}
+
+fn render_portals(frame: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(55), // Table of portals
+            Constraint::Percentage(45), // Inspector & Edit Form
+        ])
+        .split(area);
+
+    // Left pane: Table of Portals
+    let header_row = Row::new(vec![
+        Cell::from("Active"),
+        Cell::from("Name"),
+        Cell::from("Model"),
+        Cell::from("Provider"),
+        Cell::from("Status"),
+    ])
+    .style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )
+    .bottom_margin(1);
+
+    let rows: Vec<Row> = app
+        .portals
+        .iter()
+        .enumerate()
+        .map(|(idx, p)| {
+            let active_marker = if p.is_active { "[*]" } else { "[ ]" };
+            let active_style = if p.is_active {
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+
+            let status_style = match p.status_text() {
+                "Ready (Local)" => Style::default().fg(Color::Green),
+                "Configured (Custom Key)" | "Configured (Env Var)" => {
+                    Style::default().fg(Color::Cyan)
+                }
+                _ => Style::default().fg(Color::Yellow),
+            };
+
+            let row_style = if idx == app.selected_portal_idx {
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            Row::new(vec![
+                Cell::from(Span::styled(active_marker, active_style)),
+                Cell::from(p.name.clone()),
+                Cell::from(p.model_name.clone()),
+                Cell::from(p.provider_kind.clone()),
+                Cell::from(Span::styled(p.status_text(), status_style)),
+            ])
+            .style(row_style)
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(8),
+        Constraint::Min(20),
+        Constraint::Min(20),
+        Constraint::Length(12),
+        Constraint::Length(18),
+    ];
+
+    let table = Table::new(rows, widths).header(header_row).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .title(" Configured Model Portals ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+    );
+    frame.render_widget(table, chunks[0]);
+
+    // Right pane: Inspector or Input mode
+    match app.portal_input_mode {
+        PortalInputMode::Normal => {
+            render_portal_inspector(frame, app, chunks[1]);
+        }
+        PortalInputMode::EditingKey => {
+            render_portal_edit_key(frame, app, chunks[1]);
+        }
+        PortalInputMode::EditingBaseUrl => {
+            render_portal_edit_base_url(frame, app, chunks[1]);
+        }
+        PortalInputMode::Adding { field } => {
+            render_portal_adding_form(frame, app, field, chunks[1]);
+        }
+    }
+}
+
+fn render_portal_inspector(frame: &mut Frame, app: &App, area: Rect) {
+    if let Some(portal) = app.portals.get(app.selected_portal_idx) {
+        let est_cost = cortex_runtime::estimate_cost(&portal.model_name, 1_000_000, 1_000_000);
+        let api_key_display = if let Some(key) = &portal.api_key {
+            if key.len() > 8 {
+                format!("{}...{}", &key[..4], &key[key.len() - 4..])
+            } else {
+                "********".to_string()
+            }
+        } else if portal.provider_kind == "ollama" {
+            "Not Required (Local endpoint)".to_string()
+        } else if portal.is_configured() {
+            "Configured via Environment Variable".to_string()
+        } else {
+            "Not Configured (Press 'e' to set)".to_string()
+        };
+
+        let base_url_display = portal
+            .base_url
+            .clone()
+            .unwrap_or_else(|| "Provider Default Endpoint".to_string());
+
+        let lines = vec![
+            Line::from(vec![
+                Span::styled("Portal ID: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&portal.id, Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("Name: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    &portal.name,
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Provider Type: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&portal.provider_kind, Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("Model: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    &portal.model_name,
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Base URL: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(base_url_display, Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("API Key: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(api_key_display, Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("Est. Cost: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("${:.2} / 1M prompt + 1M completion", est_cost),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Active Portal: ", Style::default().fg(Color::DarkGray)),
+                if portal.is_active {
+                    Span::styled(
+                        "YES (Current Dispatch Target)",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    Span::styled("No", Style::default().fg(Color::DarkGray))
+                },
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Quick Actions:",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(vec![
+                Span::styled("[Enter / Space] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Set as active portal"),
+            ]),
+            Line::from(vec![
+                Span::styled("[e] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Set / Edit custom API key"),
+            ]),
+            Line::from(vec![
+                Span::styled("[b] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Set / Edit base endpoint URL"),
+            ]),
+            Line::from(vec![
+                Span::styled("[a] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Add a new custom model portal"),
+            ]),
+            Line::from(vec![
+                Span::styled("[d] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Delete selected portal"),
+            ]),
+            Line::from(vec![
+                Span::styled("[t] ", Style::default().fg(Color::Cyan)),
+                Span::raw("Test configuration & credentials"),
+            ]),
+        ];
+
+        let panel = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .title(" Portal Inspector "),
+            )
+            .wrap(Wrap { trim: true });
+        frame.render_widget(panel, area);
+    }
+}
+
+fn render_portal_edit_key(frame: &mut Frame, app: &App, area: Rect) {
+    let portal_name = app
+        .portals
+        .get(app.selected_portal_idx)
+        .map(|p| p.name.as_str())
+        .unwrap_or("Portal");
+
+    let lines = vec![
+        Line::from(Span::styled(
+            format!("Set API Key for: {}", portal_name),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Enter your API key below. Leave blank to clear and use environment variables.",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "Key: ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(&app.portal_input_buffer, Style::default().fg(Color::White)),
+            Span::styled("█", Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Controls: Press Enter to save | Esc to cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Edit API Key ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+    );
+    frame.render_widget(widget, area);
+}
+
+fn render_portal_edit_base_url(frame: &mut Frame, app: &App, area: Rect) {
+    let portal_name = app
+        .portals
+        .get(app.selected_portal_idx)
+        .map(|p| p.name.as_str())
+        .unwrap_or("Portal");
+
+    let lines = vec![
+        Line::from(Span::styled(
+            format!("Set Base URL for: {}", portal_name),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Enter custom endpoint URL (e.g. http://localhost:11434/v1). Leave blank for default.",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "Base URL: ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(&app.portal_input_buffer, Style::default().fg(Color::White)),
+            Span::styled("█", Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Controls: Press Enter to save | Esc to cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Edit Base URL ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+    );
+    frame.render_widget(widget, area);
+}
+
+fn render_portal_adding_form(frame: &mut Frame, app: &App, current_field: PortalField, area: Rect) {
+    let (step_num, field_name, hint) = match current_field {
+        PortalField::Name => (
+            "1/4",
+            "Portal Display Name",
+            "e.g. 'My Ollama Llama 3', 'Production Anthropic'",
+        ),
+        PortalField::Model => (
+            "2/4",
+            "Model Identifier",
+            "e.g. 'gpt-4o', 'claude-3-5-sonnet', 'ollama/llama3.1'",
+        ),
+        PortalField::BaseUrl => (
+            "3/4",
+            "Base Endpoint URL",
+            "e.g. 'http://localhost:11434/v1' (or leave blank for default)",
+        ),
+        PortalField::ApiKey => (
+            "4/4",
+            "API Authentication Key",
+            "e.g. 'sk-...' (or leave blank to inherit from env vars)",
+        ),
+    };
+
+    let lines = vec![
+        Line::from(Span::styled(
+            format!("Step {} - Create New Model Portal", step_num),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Current Field: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                field_name,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(Span::styled(hint, Style::default().fg(Color::DarkGray))),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                "> ",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(&app.portal_input_buffer, Style::default().fg(Color::White)),
+            Span::styled("█", Style::default().fg(Color::Cyan)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Draft Summary:",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::UNDERLINED),
+        )),
+        Line::from(vec![
+            Span::styled("  Name: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                if app.new_portal_draft.name.is_empty() {
+                    "(editing...)"
+                } else {
+                    &app.new_portal_draft.name
+                },
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Model: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                if app.new_portal_draft.model_name.is_empty() {
+                    "(pending...)"
+                } else {
+                    &app.new_portal_draft.model_name
+                },
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Base URL: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                if app.new_portal_draft.base_url.is_empty() {
+                    "(default)"
+                } else {
+                    &app.new_portal_draft.base_url
+                },
+                Style::default().fg(Color::White),
+            ),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Controls: Press Enter to proceed | Esc to cancel creation",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    let widget = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Add New Portal ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+    );
+    frame.render_widget(widget, area);
+}
+
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let status_text = app
         .status_message
         .clone()
         .unwrap_or_else(|| "Cortex Control Plane".to_string());
 
-    let footer_text = vec![Line::from(vec![
+    let hints = match app.active_tab {
+        ActiveTab::Chat => vec![
+            Span::styled("Enter", Style::default().fg(Color::Yellow)),
+            Span::raw(": Dispatch | "),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::raw(": Cancel/Back | "),
+            Span::styled("Tab", Style::default().fg(Color::Yellow)),
+            Span::raw(": Switch Tabs | "),
+            Span::styled("PageUp/Dn", Style::default().fg(Color::Yellow)),
+            Span::raw(": Scroll | "),
+            Span::styled("Ctrl+C", Style::default().fg(Color::Yellow)),
+            Span::raw(": Quit"),
+        ],
+        ActiveTab::Portals => {
+            if app.portal_input_mode != crate::app::PortalInputMode::Normal {
+                vec![
+                    Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                    Span::raw(": Confirm Field | "),
+                    Span::styled("Esc", Style::default().fg(Color::Yellow)),
+                    Span::raw(": Cancel Edit | "),
+                    Span::styled("Ctrl+C", Style::default().fg(Color::Yellow)),
+                    Span::raw(": Quit"),
+                ]
+            } else {
+                vec![
+                    Span::styled("Enter/Space", Style::default().fg(Color::Yellow)),
+                    Span::raw(": Activate | "),
+                    Span::styled("e", Style::default().fg(Color::Yellow)),
+                    Span::raw(": API Key | "),
+                    Span::styled("b", Style::default().fg(Color::Yellow)),
+                    Span::raw(": Base URL | "),
+                    Span::styled("a", Style::default().fg(Color::Yellow)),
+                    Span::raw(": Add | "),
+                    Span::styled("d", Style::default().fg(Color::Yellow)),
+                    Span::raw(": Delete | "),
+                    Span::styled("t", Style::default().fg(Color::Yellow)),
+                    Span::raw(": Test | "),
+                    Span::styled("Tab", Style::default().fg(Color::Yellow)),
+                    Span::raw(": Tabs | "),
+                    Span::styled("q", Style::default().fg(Color::Yellow)),
+                    Span::raw(": Quit"),
+                ]
+            }
+        }
+        _ => vec![
+            Span::styled("Tab / 1-8", Style::default().fg(Color::Yellow)),
+            Span::raw(": Switch Tabs | "),
+            Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
+            Span::raw(": Navigate | "),
+            Span::styled("Enter", Style::default().fg(Color::Yellow)),
+            Span::raw(": Inspect | "),
+            Span::styled("r", Style::default().fg(Color::Yellow)),
+            Span::raw(": Refresh | "),
+            Span::styled("q", Style::default().fg(Color::Yellow)),
+            Span::raw(": Quit"),
+        ],
+    };
+
+    let mut line_spans = vec![
         Span::styled(status_text, Style::default().fg(Color::White)),
         Span::raw(" | "),
-        Span::styled("Tab / 1-6", Style::default().fg(Color::Yellow)),
-        Span::raw(": Switch Tabs | "),
-        Span::styled("↑/↓", Style::default().fg(Color::Yellow)),
-        Span::raw(": Navigate | "),
-        Span::styled("Enter", Style::default().fg(Color::Yellow)),
-        Span::raw(": Inspect | "),
-        Span::styled("r", Style::default().fg(Color::Yellow)),
-        Span::raw(": Refresh | "),
-        Span::styled("q", Style::default().fg(Color::Yellow)),
-        Span::raw(": Quit"),
-    ])];
+    ];
+    line_spans.extend(hints);
 
-    let footer = Paragraph::new(footer_text).block(
+    let footer = Paragraph::new(vec![Line::from(line_spans)]).block(
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded),

@@ -1,6 +1,6 @@
 //! Keyboard event handling and navigation dispatch for the Cortex TUI.
 
-use crate::app::{ActiveTab, App};
+use crate::app::{ActiveTab, App, PortalInputMode};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Process a single keyboard event and update [`App`] state accordingly.
@@ -10,6 +10,75 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Dedicated routing for the interactive Chat tab
+    if app.active_tab == ActiveTab::Chat {
+        match key.code {
+            KeyCode::Tab => {
+                app.next_tab();
+            }
+            KeyCode::BackTab => {
+                app.prev_tab();
+            }
+            KeyCode::Esc => {
+                if app.chat_is_running {
+                    app.cancel_chat_agent();
+                } else if !app.chat_input.is_empty() {
+                    app.chat_input.clear();
+                } else {
+                    app.set_tab(ActiveTab::Dashboard);
+                }
+            }
+            KeyCode::Enter => {
+                app.dispatch_chat();
+            }
+            KeyCode::Backspace => {
+                app.chat_input.pop();
+            }
+            KeyCode::PageUp => {
+                app.chat_scroll_up();
+            }
+            KeyCode::PageDown => {
+                app.chat_scroll_down();
+            }
+            KeyCode::Up => {
+                if app.chat_input.is_empty() {
+                    app.chat_scroll_up();
+                }
+            }
+            KeyCode::Down => {
+                if app.chat_input.is_empty() {
+                    app.chat_scroll_down();
+                }
+            }
+            KeyCode::Char(c) => {
+                app.chat_input.push(c);
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Dedicated routing for Portals tab when inside an active input or edit mode
+    if app.active_tab == ActiveTab::Portals && app.portal_input_mode != PortalInputMode::Normal {
+        match key.code {
+            KeyCode::Esc => {
+                app.cancel_portal_input();
+            }
+            KeyCode::Enter => {
+                app.confirm_portal_input();
+            }
+            KeyCode::Backspace => {
+                app.portal_input_buffer.pop();
+            }
+            KeyCode::Char(c) => {
+                app.portal_input_buffer.push(c);
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Default navigation for overview tabs and Portals in normal mode
     match key.code {
         KeyCode::Char('q') | KeyCode::Char('Q') => {
             app.should_quit = true;
@@ -38,6 +107,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Char('6') => {
             app.set_tab(ActiveTab::Tasks);
         }
+        KeyCode::Char('7') => {
+            app.set_tab(ActiveTab::Chat);
+        }
+        KeyCode::Char('8') => {
+            app.set_tab(ActiveTab::Portals);
+        }
         KeyCode::Char('r') | KeyCode::Char('R') => {
             app.refresh();
             app.status_message = Some("Refreshed state from SQLite store.".to_string());
@@ -50,6 +125,25 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Enter => {
             app.select_current();
+        }
+        // Portals quick action shortcuts in normal mode
+        KeyCode::Char('a') if app.active_tab == ActiveTab::Portals => {
+            app.start_adding_portal();
+        }
+        KeyCode::Char('e') if app.active_tab == ActiveTab::Portals => {
+            app.start_editing_key();
+        }
+        KeyCode::Char('b') if app.active_tab == ActiveTab::Portals => {
+            app.start_editing_base_url();
+        }
+        KeyCode::Char('d') if app.active_tab == ActiveTab::Portals => {
+            app.delete_selected_portal();
+        }
+        KeyCode::Char('t') if app.active_tab == ActiveTab::Portals => {
+            app.test_selected_portal();
+        }
+        KeyCode::Char(' ') if app.active_tab == ActiveTab::Portals => {
+            app.activate_selected_portal();
         }
         KeyCode::Esc if app.active_tab != ActiveTab::Dashboard => {
             app.set_tab(ActiveTab::Dashboard);
@@ -105,23 +199,60 @@ mod tests {
         handle_key(&mut app, make_key(KeyCode::BackTab));
         assert_eq!(app.active_tab, ActiveTab::Dashboard);
 
-        handle_key(&mut app, make_key(KeyCode::Char('4')));
-        assert_eq!(app.active_tab, ActiveTab::Events);
+        handle_key(&mut app, make_key(KeyCode::Char('7')));
+        assert_eq!(app.active_tab, ActiveTab::Chat);
+
+        handle_key(&mut app, make_key(KeyCode::Tab));
+        assert_eq!(app.active_tab, ActiveTab::Portals);
 
         handle_key(&mut app, make_key(KeyCode::Esc));
         assert_eq!(app.active_tab, ActiveTab::Dashboard);
     }
 
     #[test]
-    fn test_navigation_keys() {
+    fn test_chat_tab_input_handling() {
         let mut app = App::new(None);
-        app.set_tab(ActiveTab::Agents);
-        assert_eq!(app.selected_agent_idx, 0);
+        app.set_tab(ActiveTab::Chat);
+
+        handle_key(&mut app, make_key(KeyCode::Char('h')));
+        handle_key(&mut app, make_key(KeyCode::Char('e')));
+        handle_key(&mut app, make_key(KeyCode::Char('l')));
+        handle_key(&mut app, make_key(KeyCode::Char('l')));
+        handle_key(&mut app, make_key(KeyCode::Char('o')));
+        assert_eq!(app.chat_input, "hello");
+
+        handle_key(&mut app, make_key(KeyCode::Backspace));
+        assert_eq!(app.chat_input, "hell");
+
+        handle_key(&mut app, make_key(KeyCode::Esc));
+        assert_eq!(app.chat_input, "");
+        assert_eq!(app.active_tab, ActiveTab::Chat);
+
+        handle_key(&mut app, make_key(KeyCode::Esc));
+        assert_eq!(app.active_tab, ActiveTab::Dashboard);
+    }
+
+    #[test]
+    fn test_portal_tab_shortcuts_and_editing() {
+        let mut app = App::new(None);
+        app.set_tab(ActiveTab::Portals);
+        assert_eq!(app.selected_portal_idx, 0);
 
         handle_key(&mut app, make_key(KeyCode::Down));
-        assert_eq!(app.selected_agent_idx, 1);
+        assert_eq!(app.selected_portal_idx, 1);
 
-        handle_key(&mut app, make_key(KeyCode::Up));
-        assert_eq!(app.selected_agent_idx, 0);
+        // Activate portal with Space
+        handle_key(&mut app, make_key(KeyCode::Char(' ')));
+        assert!(app.portals[1].is_active);
+
+        // Enter edit key mode with 'e'
+        handle_key(&mut app, make_key(KeyCode::Char('e')));
+        assert_eq!(app.portal_input_mode, PortalInputMode::EditingKey);
+
+        // Type key
+        handle_key(&mut app, make_key(KeyCode::Char('x')));
+        handle_key(&mut app, make_key(KeyCode::Enter));
+        assert_eq!(app.portal_input_mode, PortalInputMode::Normal);
+        assert_eq!(app.portals[1].api_key, Some("x".to_string()));
     }
 }
