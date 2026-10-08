@@ -16,10 +16,7 @@ rust-version = "1.75"
 license = "Apache-2.0"
 authors = ["Cortex Contributors"]
 repository = "https://github.com/cortex-ai/cortex"
-homepage = "https://github.com/cortex-ai/cortex"
-readme = "README.md"
-keywords = ["agent", "runtime", "llm", "autonomous", "harness"]
-categories = ["command-line-utilities", "development-tools"]
+publish = false
 
 [workspace.dependencies]
 cortex-core = { path = "crates/cortex-core", version = "0.1.0-alpha.1" }
