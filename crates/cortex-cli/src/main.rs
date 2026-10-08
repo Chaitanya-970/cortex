@@ -6,8 +6,8 @@
 use clap::{Parser, Subcommand};
 use cortex_core::{RunId, VERSION};
 use cortex_runtime::{
-    create_model_provider, tools, AgentContext, AgentLoop, RunStore, RunSummary, ToolRegistry,
-    Workspace,
+    create_model_provider, tools, AgentContext, AgentLoop, CortexConfig, McpManager, RunStore,
+    RunSummary, ToolRegistry, Workspace,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -71,6 +71,16 @@ enum Commands {
         /// Output the final run result in JSON format.
         #[arg(long)]
         json: bool,
+
+        /// Path to cortex.toml configuration file.
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+    },
+
+    /// Manage Model Context Protocol (MCP) servers and external tools.
+    Mcp {
+        #[command(subcommand)]
+        action: McpCommands,
     },
 
     /// Manage and inspect recorded execution runs.
@@ -90,6 +100,26 @@ enum Commands {
         /// Optional path to SQLite database.
         #[arg(short, long)]
         db: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum McpCommands {
+    /// List configured MCP servers and discover available tools.
+    List {
+        /// Optional path to cortex.toml configuration file.
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+    },
+
+    /// Test connection to an MCP server and query its capabilities.
+    Test {
+        /// Server name from cortex.toml to test.
+        server: String,
+
+        /// Optional path to cortex.toml configuration file.
+        #[arg(short, long)]
+        config: Option<PathBuf>,
     },
 }
 
@@ -317,6 +347,7 @@ fn execute_run(
     db: Option<PathBuf>,
     quiet: bool,
     json: bool,
+    config: Option<PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ws_path = match workspace {
         Some(p) => p,
@@ -336,6 +367,45 @@ fn execute_run(
     registry.register(Arc::new(tools::GitCommitTool::new(ws.clone())))?;
     registry.register(Arc::new(tools::GitLogTool::new(ws.clone())))?;
     registry.register(Arc::new(tools::GitBranchTool::new(ws.clone())))?;
+
+    // Load MCP configuration and register external tools if available
+    let config_file = config.or_else(|| {
+        let ws_config = ws_path.join("cortex.toml");
+        if ws_config.is_file() {
+            Some(ws_config)
+        } else {
+            None
+        }
+    });
+
+    if let Some(cfg_path) = config_file {
+        if cfg_path.is_file() {
+            match CortexConfig::from_file(&cfg_path) {
+                Ok(cfg) => match McpManager::start(&cfg) {
+                    Ok(manager) => match manager.register_all(&registry) {
+                        Ok(count) => {
+                            if !quiet && !json && count > 0 {
+                                println!("Loaded {} external tools from MCP servers", count);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to register MCP tools: {}", e);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Warning: Failed to initialize MCP servers: {}", e);
+                    }
+                },
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to load configuration '{}': {}",
+                        cfg_path.display(),
+                        e
+                    );
+                }
+            }
+        }
+    }
 
     // Instantiate model provider
     let provider = create_model_provider(model, api_key, base_url)?;
@@ -429,6 +499,192 @@ fn execute_run(
     Ok(())
 }
 
+fn load_config_or_exit(config_path: Option<PathBuf>) -> CortexConfig {
+    let resolved = match config_path {
+        Some(p) => {
+            if !p.is_file() {
+                eprintln!("Error: Configuration file '{}' not found.", p.display());
+                std::process::exit(1);
+            }
+            p
+        }
+        None => match CortexConfig::find_and_load(None) {
+            Ok(Some((path, cfg))) => {
+                println!("Using configuration file: {}", path.display());
+                return cfg;
+            }
+            Ok(None) => {
+                eprintln!("Error: No cortex.toml configuration file found.");
+                eprintln!("Create cortex.toml in your workspace or specify --config <path>.");
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("Error searching for cortex.toml: {}", e);
+                std::process::exit(1);
+            }
+        },
+    };
+
+    match CortexConfig::from_file(&resolved) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("Error parsing '{}': {}", resolved.display(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn mcp_list(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config_or_exit(config_path);
+    let servers = config.servers();
+
+    if servers.is_empty() {
+        println!("No MCP servers configured in cortex.toml.");
+        return Ok(());
+    }
+
+    println!("Configured MCP Servers ({})", servers.len());
+    println!("{}", "-".repeat(50));
+
+    for (name, srv) in servers {
+        let status = if srv.disabled { "disabled" } else { "enabled" };
+        let transport_desc = if let Some(cmd) = &srv.command {
+            format!("stdio: {} {}", cmd, srv.args.join(" "))
+        } else if let Some(url) = &srv.url {
+            format!("sse: {}", url)
+        } else {
+            "unspecified".to_string()
+        };
+
+        let prefix_desc = srv.prefix.as_deref().unwrap_or(&name);
+        println!("Server: {} [{}]", name, status);
+        println!("  Transport: {}", transport_desc);
+        println!("  Prefix:    {}", prefix_desc);
+
+        if srv.disabled {
+            println!();
+            continue;
+        }
+
+        let client_res = if let Some(cmd) = &srv.command {
+            cortex_runtime::mcp::McpClient::connect_stdio(cmd, &srv.args, &srv.env)
+        } else if let Some(url) = &srv.url {
+            cortex_runtime::mcp::McpClient::connect_sse(url)
+        } else {
+            continue;
+        };
+
+        match client_res {
+            Ok(client) => match client.initialize() {
+                Ok(init) => match client.list_tools() {
+                    Ok(tools) => {
+                        println!(
+                            "  Discovered Tools ({}) [Server v{}]:",
+                            tools.len(),
+                            init.server_info.version
+                        );
+                        for t in tools {
+                            let desc = t.description.as_deref().unwrap_or("no description");
+                            println!("    - {}_{}: {}", prefix_desc, t.name, desc);
+                        }
+                    }
+                    Err(e) => println!("  Failed to list tools: {}", e),
+                },
+                Err(e) => println!("  Handshake failed: {}", e),
+            },
+            Err(e) => println!("  Failed to connect: {}", e),
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+fn mcp_test(
+    server_name: &str,
+    config_path: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = load_config_or_exit(config_path);
+    let servers = config.servers();
+
+    let srv = match servers.get(server_name) {
+        Some(s) => s,
+        None => {
+            let available: Vec<String> = servers.keys().cloned().collect();
+            eprintln!(
+                "Error: Server '{}' not found in configuration.",
+                server_name
+            );
+            eprintln!("Available servers: {}", available.join(", "));
+            std::process::exit(1);
+        }
+    };
+
+    println!("Testing MCP Server '{}'...", server_name);
+    let client = if let Some(cmd) = &srv.command {
+        println!("Spawning stdio process: {} {}", cmd, srv.args.join(" "));
+        cortex_runtime::mcp::McpClient::connect_stdio(cmd, &srv.args, &srv.env)?
+    } else if let Some(url) = &srv.url {
+        println!("Connecting via SSE: {}", url);
+        cortex_runtime::mcp::McpClient::connect_sse(url)?
+    } else {
+        eprintln!(
+            "Error: Server '{}' has neither command nor url configured.",
+            server_name
+        );
+        std::process::exit(1);
+    };
+
+    print!("Performing handshake (initialize)... ");
+    let init = client.initialize()?;
+    println!("OK");
+    println!("  Server Name:    {}", init.server_info.name);
+    println!("  Server Version: {}", init.server_info.version);
+    println!("  Protocol:       {}", init.protocol_version);
+    if let Some(instructions) = init.instructions {
+        println!("  Instructions:   {}", instructions);
+    }
+
+    print!("Querying tools (tools/list)... ");
+    match client.list_tools() {
+        Ok(tools) => {
+            println!("OK ({} tools discovered)", tools.len());
+            for t in tools {
+                let desc = t.description.as_deref().unwrap_or("no description");
+                println!("  - {}: {}", t.name, desc);
+            }
+        }
+        Err(e) => println!("Failed: {}", e),
+    }
+
+    print!("Querying resources (resources/list)... ");
+    match client.list_resources() {
+        Ok(resources) => {
+            println!("OK ({} resources discovered)", resources.len());
+            for r in resources {
+                println!("  - {} ({})", r.name, r.uri);
+            }
+        }
+        Err(e) => println!("Failed: {}", e),
+    }
+
+    print!("Querying prompts (prompts/list)... ");
+    match client.list_prompts() {
+        Ok(prompts) => {
+            println!("OK ({} prompts discovered)", prompts.len());
+            for p in prompts {
+                let desc = p.description.as_deref().unwrap_or("no description");
+                println!("  - {}: {}", p.name, desc);
+            }
+        }
+        Err(e) => println!("Failed: {}", e),
+    }
+
+    let _ = client.close();
+    println!("\nServer test completed successfully.");
+    Ok(())
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -455,6 +711,7 @@ fn main() {
             db,
             quiet,
             json,
+            config,
         }) => {
             if let Err(e) = execute_run(
                 &prompt,
@@ -466,11 +723,26 @@ fn main() {
                 db,
                 quiet,
                 json,
+                config,
             ) {
                 eprintln!("Error executing agent task: {}", e);
                 std::process::exit(1);
             }
         }
+        Some(Commands::Mcp { action }) => match action {
+            McpCommands::List { config } => {
+                if let Err(e) = mcp_list(config) {
+                    eprintln!("Error listing MCP servers: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            McpCommands::Test { server, config } => {
+                if let Err(e) = mcp_test(&server, config) {
+                    eprintln!("Error testing MCP server '{}': {}", server, e);
+                    std::process::exit(1);
+                }
+            }
+        },
         Some(Commands::Runs { action }) => {
             let db_path = default_db_path();
             let store = match RunStore::open(&db_path) {
@@ -718,6 +990,58 @@ mod tests {
                 assert_eq!(prompt, "Analyze logs");
                 assert_eq!(model, "ollama/llama3.1");
                 assert_eq!(base_url.as_deref(), Some("http://localhost:11434/v1"));
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_run_with_config() {
+        let args = vec![
+            "cortex",
+            "run",
+            "Fix test",
+            "--config",
+            "custom-cortex.toml",
+        ];
+        let parsed = Cli::try_parse_from(args).unwrap();
+        match parsed.command {
+            Some(Commands::Run {
+                prompt,
+                config: Some(cfg),
+                ..
+            }) => {
+                assert_eq!(prompt, "Fix test");
+                assert_eq!(cfg, PathBuf::from("custom-cortex.toml"));
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_mcp_subcommands() {
+        let args_list = vec!["cortex", "mcp", "list", "--config", "cortex.toml"];
+        let parsed_list = Cli::try_parse_from(args_list).unwrap();
+        match parsed_list.command {
+            Some(Commands::Mcp {
+                action: McpCommands::List { config: Some(cfg) },
+            }) => {
+                assert_eq!(cfg, PathBuf::from("cortex.toml"));
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+
+        let args_test = vec!["cortex", "mcp", "test", "github-srv"];
+        let parsed_test = Cli::try_parse_from(args_test).unwrap();
+        match parsed_test.command {
+            Some(Commands::Mcp {
+                action:
+                    McpCommands::Test {
+                        server,
+                        config: None,
+                    },
+            }) => {
+                assert_eq!(server, "github-srv");
             }
             _ => panic!("unexpected command parsed"),
         }
