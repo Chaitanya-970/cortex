@@ -1,9 +1,16 @@
 //! Application state management and navigation model for the Cortex TUI.
 
-use cortex_core::EventRecord;
+use cortex_core::{EventRecord, ExecutionEvent, RunId};
 use cortex_harness::suite::get_suite_tasks;
 use cortex_harness::task::BenchmarkTask;
+use cortex_runtime::agent::{AgentContext, AgentLoop, AgentRunResult, CancellationToken};
+use cortex_runtime::providers::create_model_provider;
 use cortex_runtime::storage::{RunStore, RunSummary};
+use cortex_runtime::tool::ToolRegistry;
+use cortex_runtime::tools;
+use cortex_runtime::workspace::Workspace;
+use serde::{Deserialize, Serialize};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
 /// Available navigation tabs in the Cortex control plane.
@@ -22,6 +29,10 @@ pub enum ActiveTab {
     History,
     /// Curated benchmark tasks and evaluations.
     Tasks,
+    /// Interactive chat interface for autonomous agent execution.
+    Chat,
+    /// Model provider and custom inference portal configuration.
+    Portals,
 }
 
 impl ActiveTab {
@@ -34,6 +45,8 @@ impl ActiveTab {
             ActiveTab::Events,
             ActiveTab::History,
             ActiveTab::Tasks,
+            ActiveTab::Chat,
+            ActiveTab::Portals,
         ]
     }
 
@@ -46,6 +59,8 @@ impl ActiveTab {
             ActiveTab::Events => "4: Events",
             ActiveTab::History => "5: History",
             ActiveTab::Tasks => "6: Tasks & Bench",
+            ActiveTab::Chat => "7: Agent Chat",
+            ActiveTab::Portals => "8: Portals",
         }
     }
 }
@@ -61,6 +76,180 @@ pub struct AgentView {
     pub policy: String,
     /// Current execution state.
     pub status: String,
+}
+
+/// Configuration for a model inference provider portal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelPortal {
+    /// Unique identifier for this portal.
+    pub id: String,
+    /// Display name shown in UI tables and selectors.
+    pub name: String,
+    /// Underlying provider family (e.g., "openai", "anthropic", "ollama", "custom").
+    pub provider_kind: String,
+    /// Model identifier sent to the provider.
+    pub model_name: String,
+    /// Custom API base URL if different from provider defaults.
+    pub base_url: Option<String>,
+    /// Optional explicit API key override.
+    pub api_key: Option<String>,
+    /// Whether this portal is currently selected for agent execution runs.
+    pub is_active: bool,
+}
+
+impl ModelPortal {
+    /// Create a new portal configuration.
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        provider_kind: impl Into<String>,
+        model_name: impl Into<String>,
+        base_url: Option<String>,
+        api_key: Option<String>,
+        is_active: bool,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            provider_kind: provider_kind.into(),
+            model_name: model_name.into(),
+            base_url,
+            api_key,
+            is_active,
+        }
+    }
+
+    /// Check if the portal has credentials or local endpoint availability configured.
+    pub fn is_configured(&self) -> bool {
+        let lower = self.model_name.to_lowercase();
+        if lower.starts_with("ollama/") || self.provider_kind == "ollama" {
+            return true;
+        }
+        if lower.starts_with("claude") || self.provider_kind == "anthropic" {
+            return self.api_key.is_some()
+                || std::env::var("ANTHROPIC_API_KEY").is_ok()
+                || std::env::var("anthropic_api_key").is_ok();
+        }
+        self.api_key.is_some()
+            || std::env::var("OPENAI_API_KEY").is_ok()
+            || std::env::var("openai_api_key").is_ok()
+    }
+
+    /// Status badge text describing the configuration state.
+    pub fn status_text(&self) -> &'static str {
+        let lower = self.model_name.to_lowercase();
+        if lower.starts_with("ollama/") || self.provider_kind == "ollama" {
+            "Ready (Local)"
+        } else if self.api_key.is_some() {
+            "Configured (Custom Key)"
+        } else if (lower.starts_with("claude")
+            && (std::env::var("ANTHROPIC_API_KEY").is_ok()
+                || std::env::var("anthropic_api_key").is_ok()))
+            || std::env::var("OPENAI_API_KEY").is_ok()
+            || std::env::var("openai_api_key").is_ok()
+        {
+            "Configured (Env Var)"
+        } else {
+            "Needs API Key"
+        }
+    }
+}
+
+/// Interactive mode for portal configuration inputs in the TUI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PortalInputMode {
+    /// Normal navigation mode.
+    #[default]
+    Normal,
+    /// Multi-step form for creating a new custom portal.
+    Adding {
+        /// Current field being edited.
+        field: PortalField,
+    },
+    /// Editing the API key of the selected portal.
+    EditingKey,
+    /// Editing the Base URL of the selected portal.
+    EditingBaseUrl,
+}
+
+/// Form fields for creating a new portal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortalField {
+    /// Display name of the portal.
+    Name,
+    /// Model identifier.
+    Model,
+    /// Base endpoint URL.
+    BaseUrl,
+    /// API authentication key.
+    ApiKey,
+}
+
+/// Draft values collected during interactive portal creation.
+#[derive(Debug, Clone, Default)]
+pub struct NewPortalDraft {
+    /// Display name.
+    pub name: String,
+    /// Model name.
+    pub model_name: String,
+    /// Base URL.
+    pub base_url: String,
+    /// API key.
+    pub api_key: String,
+}
+
+/// Role classification for messages displayed in the agent chat interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatRole {
+    /// Message sent by the human user.
+    User,
+    /// Response or final answer from the autonomous agent.
+    Assistant,
+    /// Informational system notification or execution lifecycle event.
+    System,
+    /// Tool invocation or execution observation.
+    Tool,
+    /// Error message.
+    Error,
+}
+
+/// An individual message item displayed in the agent chat interface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatMessageItem {
+    /// Role of the message sender.
+    pub role: ChatRole,
+    /// Message content text.
+    pub content: String,
+    /// Timestamp when the message was recorded.
+    pub timestamp: String,
+}
+
+/// Updates emitted by background agent execution worker threads.
+#[derive(Debug)]
+pub enum ChatAgentUpdate {
+    /// Agent execution initiated.
+    Started {
+        /// Associated run identifier.
+        run_id: String,
+        /// Model descriptor name.
+        model: String,
+    },
+    /// Agent completed normally.
+    Completed(Box<AgentRunResult>),
+    /// Agent was cancelled.
+    Cancelled(String),
+    /// Agent encountered a fatal error.
+    Error(String),
+}
+
+/// Execution handle for an asynchronous agent execution thread.
+pub struct AgentExecutionHandle {
+    /// Cancellation token to stop the running agent.
+    pub cancel_token: CancellationToken,
+    /// Channel receiver for agent updates and terminal outcomes.
+    pub receiver: Receiver<ChatAgentUpdate>,
+    /// Unique run ID assigned to this execution.
+    pub run_id: Option<String>,
 }
 
 /// Primary application state container for the TUI client.
@@ -89,6 +278,32 @@ pub struct App {
     pub should_quit: bool,
     /// Transient status or notification message.
     pub status_message: Option<String>,
+
+    // Chat interface state
+    /// Recorded conversation and execution stream items.
+    pub chat_messages: Vec<ChatMessageItem>,
+    /// Current prompt text in the input box.
+    pub chat_input: String,
+    /// Message stream scroll offset.
+    pub chat_scroll: usize,
+    /// Whether an agent task is actively executing in background.
+    pub chat_is_running: bool,
+    /// Active agent background execution handle.
+    pub chat_handle: Option<AgentExecutionHandle>,
+    /// Highest event sequence number already rendered in chat stream.
+    pub chat_last_event_seq: u64,
+
+    // Portals configuration state
+    /// List of configured model portals.
+    pub portals: Vec<ModelPortal>,
+    /// Index of selected portal in table.
+    pub selected_portal_idx: usize,
+    /// Active interactive input mode in portals tab.
+    pub portal_input_mode: PortalInputMode,
+    /// Text buffer for editing portal fields.
+    pub portal_input_buffer: String,
+    /// Draft state for multi-step portal creation.
+    pub new_portal_draft: NewPortalDraft,
 }
 
 impl App {
@@ -121,11 +336,93 @@ impl App {
             selected_agent_idx: 0,
             should_quit: false,
             status_message: Some("Cortex TUI Control Plane active. Press 'q' to quit.".to_string()),
+
+            chat_messages: Vec::new(),
+            chat_input: String::new(),
+            chat_scroll: 0,
+            chat_is_running: false,
+            chat_handle: None,
+            chat_last_event_seq: 0,
+
+            portals: Self::default_portals(),
+            selected_portal_idx: 0,
+            portal_input_mode: PortalInputMode::Normal,
+            portal_input_buffer: String::new(),
+            new_portal_draft: NewPortalDraft::default(),
         };
 
         app.load_tasks();
         app.refresh();
         app
+    }
+
+    /// Default set of preconfigured model portals.
+    pub fn default_portals() -> Vec<ModelPortal> {
+        vec![
+            ModelPortal::new(
+                "openai-gpt4o-mini",
+                "OpenAI GPT-4o-mini",
+                "openai",
+                "gpt-4o-mini",
+                None,
+                None,
+                true,
+            ),
+            ModelPortal::new(
+                "openai-gpt4o",
+                "OpenAI GPT-4o",
+                "openai",
+                "gpt-4o",
+                None,
+                None,
+                false,
+            ),
+            ModelPortal::new(
+                "anthropic-sonnet",
+                "Anthropic Claude 3.5 Sonnet",
+                "anthropic",
+                "claude-3-5-sonnet-20241022",
+                None,
+                None,
+                false,
+            ),
+            ModelPortal::new(
+                "anthropic-haiku",
+                "Anthropic Claude 3.5 Haiku",
+                "anthropic",
+                "claude-3-5-haiku-20241022",
+                None,
+                None,
+                false,
+            ),
+            ModelPortal::new(
+                "ollama-llama3",
+                "Ollama LLaMA 3.1 (Local)",
+                "ollama",
+                "ollama/llama3.1",
+                Some("http://localhost:11434/v1".to_string()),
+                None,
+                false,
+            ),
+            ModelPortal::new(
+                "ollama-qwen",
+                "Ollama Qwen 2.5 Coder (Local)",
+                "ollama",
+                "ollama/qwen2.5-coder",
+                Some("http://localhost:11434/v1".to_string()),
+                None,
+                false,
+            ),
+            ModelPortal::new(
+                "deepseek-chat",
+                "DeepSeek Chat",
+                "openai",
+                "deepseek-chat",
+                Some("https://api.deepseek.com/v1".to_string()),
+                None,
+                false,
+            ),
+        ]
     }
 
     /// Load benchmark tasks from the harness suite definitions.
@@ -217,6 +514,12 @@ impl App {
                     self.selected_agent_idx += 1;
                 }
             }
+            ActiveTab::Portals => {
+                self.next_portal();
+            }
+            ActiveTab::Chat => {
+                self.chat_scroll_down();
+            }
             ActiveTab::ActiveRun => {}
         }
     }
@@ -245,15 +548,24 @@ impl App {
                     self.selected_agent_idx -= 1;
                 }
             }
+            ActiveTab::Portals => {
+                self.prev_portal();
+            }
+            ActiveTab::Chat => {
+                self.chat_scroll_up();
+            }
             ActiveTab::ActiveRun => {}
         }
     }
 
-    /// Action triggered by pressing Enter.
+    /// Action triggered by pressing Enter in item tables.
     pub fn select_current(&mut self) {
         match self.active_tab {
             ActiveTab::Dashboard | ActiveTab::History if !self.runs.is_empty() => {
                 self.active_tab = ActiveTab::ActiveRun;
+            }
+            ActiveTab::Portals => {
+                self.activate_selected_portal();
             }
             _ => {}
         }
@@ -267,6 +579,570 @@ impl App {
     /// Currently selected event record, if any.
     pub fn selected_event(&self) -> Option<&EventRecord> {
         self.events.get(self.selected_event_idx)
+    }
+
+    // ==========================================
+    // Chat & Autonomous Agent Execution Methods
+    // ==========================================
+
+    /// Reference to the currently active [`ModelPortal`].
+    pub fn active_portal(&self) -> &ModelPortal {
+        self.portals
+            .iter()
+            .find(|p| p.is_active)
+            .unwrap_or(&self.portals[0])
+    }
+
+    /// Scroll chat messages view upwards.
+    pub fn chat_scroll_up(&mut self) {
+        self.chat_scroll = self.chat_scroll.saturating_add(3);
+    }
+
+    /// Scroll chat messages view downwards.
+    pub fn chat_scroll_down(&mut self) {
+        self.chat_scroll = self.chat_scroll.saturating_sub(3);
+    }
+
+    /// Submit current chat input prompt to launch an autonomous agent.
+    pub fn dispatch_chat(&mut self) {
+        let prompt = self.chat_input.trim().to_string();
+        if prompt.is_empty() {
+            return;
+        }
+
+        if self.chat_is_running {
+            self.status_message = Some(
+                "An agent is already running. Press Esc to cancel it before launching a new task."
+                    .to_string(),
+            );
+            return;
+        }
+
+        self.chat_input.clear();
+        let now = chrono::Utc::now().format("%H:%M:%S").to_string();
+        self.chat_messages.push(ChatMessageItem {
+            role: ChatRole::User,
+            content: prompt.clone(),
+            timestamp: now,
+        });
+
+        let active_portal = self.active_portal().clone();
+        let cancel_token = CancellationToken::new();
+        let (sender, receiver) = channel();
+
+        self.chat_is_running = true;
+        self.chat_last_event_seq = 0;
+        self.chat_handle = Some(AgentExecutionHandle {
+            cancel_token: cancel_token.clone(),
+            receiver,
+            run_id: None,
+        });
+
+        let store_clone = self.store.clone();
+        let model = active_portal.model_name.clone();
+        let api_key = active_portal.api_key.clone();
+        let base_url = active_portal.base_url.clone();
+
+        std::thread::spawn(move || {
+            execute_chat_agent(
+                prompt,
+                model,
+                api_key,
+                base_url,
+                store_clone,
+                cancel_token,
+                sender,
+            );
+        });
+    }
+
+    /// Cancel the currently executing agent run, if any.
+    pub fn cancel_chat_agent(&mut self) {
+        if let Some(handle) = &self.chat_handle {
+            handle.cancel_token.cancel();
+            let now = chrono::Utc::now().format("%H:%M:%S").to_string();
+            self.chat_messages.push(ChatMessageItem {
+                role: ChatRole::System,
+                content: "Cancellation requested... Waiting for agent to abort gracefully."
+                    .to_string(),
+                timestamp: now,
+            });
+            self.status_message = Some("Sent cancellation signal to running agent.".to_string());
+        }
+    }
+
+    /// Poll for real-time updates from background agent executions and event store.
+    pub fn poll_chat_updates(&mut self) {
+        let mut finished = false;
+        let mut new_run_id: Option<String> = None;
+
+        if let Some(handle) = &mut self.chat_handle {
+            while let Ok(update) = handle.receiver.try_recv() {
+                let now = chrono::Utc::now().format("%H:%M:%S").to_string();
+                match update {
+                    ChatAgentUpdate::Started { run_id, model } => {
+                        handle.run_id = Some(run_id.clone());
+                        new_run_id = Some(run_id.clone());
+                        self.chat_messages.push(ChatMessageItem {
+                            role: ChatRole::System,
+                            content: format!(
+                                "Agent execution started (Run ID: {}, Model: {})",
+                                run_id, model
+                            ),
+                            timestamp: now,
+                        });
+                    }
+                    ChatAgentUpdate::Completed(res) => {
+                        self.chat_messages.push(ChatMessageItem {
+                            role: ChatRole::Assistant,
+                            content: res.final_answer.clone(),
+                            timestamp: now.clone(),
+                        });
+                        self.chat_messages.push(ChatMessageItem {
+                            role: ChatRole::System,
+                            content: format!(
+                                "Run completed in {}ms across {} iterations | Tokens: {} | Cost: ${:.4}",
+                                res.duration_ms,
+                                res.iterations,
+                                res.tokens_total,
+                                res.estimated_cost_usd
+                            ),
+                            timestamp: now,
+                        });
+                        finished = true;
+                    }
+                    ChatAgentUpdate::Cancelled(reason) => {
+                        self.chat_messages.push(ChatMessageItem {
+                            role: ChatRole::System,
+                            content: format!("Agent run cancelled: {}", reason),
+                            timestamp: now,
+                        });
+                        finished = true;
+                    }
+                    ChatAgentUpdate::Error(err) => {
+                        self.chat_messages.push(ChatMessageItem {
+                            role: ChatRole::Error,
+                            content: format!("Agent execution error: {}", err),
+                            timestamp: now,
+                        });
+                        finished = true;
+                    }
+                }
+            }
+
+            // Stream new intermediate events from SQLite store if available
+            if let (Some(store), Some(run_id)) = (&self.store, &handle.run_id) {
+                let r_id = RunId::from(run_id.clone());
+                if let Ok(events) = store.get_events(&r_id) {
+                    for event in events {
+                        if event.sequence > self.chat_last_event_seq {
+                            self.chat_last_event_seq = event.sequence;
+                            let ts = event
+                                .timestamp
+                                .split('T')
+                                .nth(1)
+                                .unwrap_or(&event.timestamp)
+                                .to_string();
+                            match &event.event {
+                                ExecutionEvent::ToolStarted {
+                                    tool_name,
+                                    arguments,
+                                    ..
+                                } => {
+                                    let args_str = arguments.to_string();
+                                    let preview = if args_str.len() > 60 {
+                                        format!("{}...", &args_str[..57])
+                                    } else {
+                                        args_str
+                                    };
+                                    self.chat_messages.push(ChatMessageItem {
+                                        role: ChatRole::Tool,
+                                        content: format!("Tool call: {} ({})", tool_name, preview),
+                                        timestamp: ts,
+                                    });
+                                }
+                                ExecutionEvent::ToolCompleted {
+                                    tool_name, output, ..
+                                } => {
+                                    let preview = if output.len() > 60 {
+                                        format!("{}...", &output[..57])
+                                    } else {
+                                        output.clone()
+                                    };
+                                    self.chat_messages.push(ChatMessageItem {
+                                        role: ChatRole::Tool,
+                                        content: format!(
+                                            "Tool {} finished -> {}",
+                                            tool_name, preview
+                                        ),
+                                        timestamp: ts,
+                                    });
+                                }
+                                ExecutionEvent::ToolFailed {
+                                    tool_name, error, ..
+                                } => {
+                                    self.chat_messages.push(ChatMessageItem {
+                                        role: ChatRole::Error,
+                                        content: format!("Tool {} failed: {}", tool_name, error),
+                                        timestamp: ts,
+                                    });
+                                }
+                                ExecutionEvent::ModelRequest { prompt_preview, .. } => {
+                                    let preview = if prompt_preview.len() > 50 {
+                                        format!("{}...", &prompt_preview[..47])
+                                    } else {
+                                        prompt_preview.clone()
+                                    };
+                                    self.chat_messages.push(ChatMessageItem {
+                                        role: ChatRole::System,
+                                        content: format!("Model thinking: {}", preview),
+                                        timestamp: ts,
+                                    });
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if finished {
+            self.chat_handle = None;
+            self.chat_is_running = false;
+            self.refresh();
+        } else if new_run_id.is_some() {
+            self.refresh();
+        }
+    }
+
+    // ==========================================
+    // Portals & Provider Configuration Methods
+    // ==========================================
+
+    /// Navigate to next portal in table.
+    pub fn next_portal(&mut self) {
+        if !self.portals.is_empty() && self.selected_portal_idx + 1 < self.portals.len() {
+            self.selected_portal_idx += 1;
+        }
+    }
+
+    /// Navigate to previous portal in table.
+    pub fn prev_portal(&mut self) {
+        if self.selected_portal_idx > 0 {
+            self.selected_portal_idx -= 1;
+        }
+    }
+
+    /// Mark the currently selected portal as active.
+    pub fn activate_selected_portal(&mut self) {
+        if self.portals.is_empty() {
+            return;
+        }
+        for (i, p) in self.portals.iter_mut().enumerate() {
+            p.is_active = i == self.selected_portal_idx;
+        }
+        let name = self.portals[self.selected_portal_idx].name.clone();
+        self.status_message = Some(format!("Activated portal: {}", name));
+    }
+
+    /// Delete the selected portal if more than one exists.
+    pub fn delete_selected_portal(&mut self) {
+        if self.portals.len() <= 1 {
+            self.status_message = Some("Cannot delete the only remaining portal.".to_string());
+            return;
+        }
+        let was_active = self.portals[self.selected_portal_idx].is_active;
+        let name = self.portals.remove(self.selected_portal_idx).name;
+        if self.selected_portal_idx >= self.portals.len() {
+            self.selected_portal_idx = self.portals.len() - 1;
+        }
+        if was_active {
+            self.portals[0].is_active = true;
+        }
+        self.status_message = Some(format!("Deleted portal '{}'.", name));
+    }
+
+    /// Begin interactive flow for adding a new portal.
+    pub fn start_adding_portal(&mut self) {
+        self.portal_input_mode = PortalInputMode::Adding {
+            field: PortalField::Name,
+        };
+        self.portal_input_buffer.clear();
+        self.new_portal_draft = NewPortalDraft::default();
+        self.status_message = Some("Creating new portal: Enter Portal Name.".to_string());
+    }
+
+    /// Begin editing API key for currently selected portal.
+    pub fn start_editing_key(&mut self) {
+        if let Some(portal) = self.portals.get(self.selected_portal_idx) {
+            self.portal_input_mode = PortalInputMode::EditingKey;
+            self.portal_input_buffer = portal.api_key.clone().unwrap_or_default();
+            self.status_message = Some(format!(
+                "Editing API key for '{}'. Press Enter to save, Esc to cancel.",
+                portal.name
+            ));
+        }
+    }
+
+    /// Begin editing Base URL for currently selected portal.
+    pub fn start_editing_base_url(&mut self) {
+        if let Some(portal) = self.portals.get(self.selected_portal_idx) {
+            self.portal_input_mode = PortalInputMode::EditingBaseUrl;
+            self.portal_input_buffer = portal.base_url.clone().unwrap_or_default();
+            self.status_message = Some(format!(
+                "Editing Base URL for '{}'. Press Enter to save, Esc to cancel.",
+                portal.name
+            ));
+        }
+    }
+
+    /// Confirm the current interactive input field in Portals tab.
+    pub fn confirm_portal_input(&mut self) {
+        match self.portal_input_mode {
+            PortalInputMode::Normal => {}
+            PortalInputMode::EditingKey => {
+                let trimmed = self.portal_input_buffer.trim().to_string();
+                let key_opt = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                };
+                if let Some(portal) = self.portals.get_mut(self.selected_portal_idx) {
+                    portal.api_key = key_opt;
+                    self.status_message = Some(format!("Updated API key for '{}'.", portal.name));
+                }
+                self.portal_input_mode = PortalInputMode::Normal;
+                self.portal_input_buffer.clear();
+            }
+            PortalInputMode::EditingBaseUrl => {
+                let trimmed = self.portal_input_buffer.trim().to_string();
+                let url_opt = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                };
+                if let Some(portal) = self.portals.get_mut(self.selected_portal_idx) {
+                    portal.base_url = url_opt;
+                    self.status_message = Some(format!("Updated Base URL for '{}'.", portal.name));
+                }
+                self.portal_input_mode = PortalInputMode::Normal;
+                self.portal_input_buffer.clear();
+            }
+            PortalInputMode::Adding { field } => match field {
+                PortalField::Name => {
+                    let val = self.portal_input_buffer.trim().to_string();
+                    self.new_portal_draft.name = if val.is_empty() {
+                        "Custom Portal".to_string()
+                    } else {
+                        val
+                    };
+                    self.portal_input_buffer.clear();
+                    self.portal_input_mode = PortalInputMode::Adding {
+                        field: PortalField::Model,
+                    };
+                    self.status_message = Some(
+                        "Enter Model identifier (e.g. gpt-4o, claude-3-5-sonnet, ollama/llama3.1):"
+                            .to_string(),
+                    );
+                }
+                PortalField::Model => {
+                    let val = self.portal_input_buffer.trim().to_string();
+                    self.new_portal_draft.model_name = if val.is_empty() {
+                        "gpt-4o-mini".to_string()
+                    } else {
+                        val
+                    };
+                    self.portal_input_buffer.clear();
+                    self.portal_input_mode = PortalInputMode::Adding {
+                        field: PortalField::BaseUrl,
+                    };
+                    self.status_message =
+                        Some("Enter Base URL (or leave blank for provider default):".to_string());
+                }
+                PortalField::BaseUrl => {
+                    let val = self.portal_input_buffer.trim().to_string();
+                    self.new_portal_draft.base_url = val;
+                    self.portal_input_buffer.clear();
+                    self.portal_input_mode = PortalInputMode::Adding {
+                        field: PortalField::ApiKey,
+                    };
+                    self.status_message = Some(
+                        "Enter API Key (or leave blank if using environment variable):".to_string(),
+                    );
+                }
+                PortalField::ApiKey => {
+                    let key_val = self.portal_input_buffer.trim().to_string();
+                    self.new_portal_draft.api_key = key_val;
+                    let id = format!("portal-{}", chrono::Utc::now().timestamp_millis());
+                    let lower = self.new_portal_draft.model_name.to_lowercase();
+                    let provider_kind = if lower.starts_with("ollama/") {
+                        "ollama".to_string()
+                    } else if lower.starts_with("claude") {
+                        "anthropic".to_string()
+                    } else {
+                        "openai".to_string()
+                    };
+                    let base_url = if self.new_portal_draft.base_url.is_empty() {
+                        None
+                    } else {
+                        Some(self.new_portal_draft.base_url.clone())
+                    };
+                    let api_key = if self.new_portal_draft.api_key.is_empty() {
+                        None
+                    } else {
+                        Some(self.new_portal_draft.api_key.clone())
+                    };
+
+                    let new_portal = ModelPortal::new(
+                        id,
+                        self.new_portal_draft.name.clone(),
+                        provider_kind,
+                        self.new_portal_draft.model_name.clone(),
+                        base_url,
+                        api_key,
+                        true,
+                    );
+
+                    for p in &mut self.portals {
+                        p.is_active = false;
+                    }
+                    self.portals.push(new_portal);
+                    self.selected_portal_idx = self.portals.len() - 1;
+                    self.portal_input_mode = PortalInputMode::Normal;
+                    self.portal_input_buffer.clear();
+                    self.new_portal_draft = NewPortalDraft::default();
+                    self.status_message = Some("Created and activated new portal.".to_string());
+                }
+            },
+        }
+    }
+
+    /// Cancel any active portal input mode and discard buffer.
+    pub fn cancel_portal_input(&mut self) {
+        self.portal_input_mode = PortalInputMode::Normal;
+        self.portal_input_buffer.clear();
+        self.new_portal_draft = NewPortalDraft::default();
+        self.status_message = Some("Cancelled portal edit.".to_string());
+    }
+
+    /// Test configuration of currently selected portal.
+    pub fn test_selected_portal(&mut self) {
+        if let Some(portal) = self.portals.get(self.selected_portal_idx) {
+            if portal.is_configured() {
+                self.status_message = Some(format!(
+                    "Portal '{}' ({}) is configured and ready.",
+                    portal.name,
+                    portal.status_text()
+                ));
+            } else {
+                self.status_message = Some(format!(
+                    "Portal '{}' requires credentials! Press 'e' to set API key or export env var.",
+                    portal.name
+                ));
+            }
+        }
+    }
+}
+
+/// Asynchronous worker executing the agent iteration loop in background.
+fn execute_chat_agent(
+    prompt: String,
+    model: String,
+    api_key: Option<String>,
+    base_url: Option<String>,
+    store: Option<Arc<RunStore>>,
+    cancel_token: CancellationToken,
+    sender: Sender<ChatAgentUpdate>,
+) {
+    let ws_path = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let ws = match Workspace::new(&ws_path) {
+        Ok(w) => Arc::new(w),
+        Err(e) => {
+            let _ = sender.send(ChatAgentUpdate::Error(format!(
+                "Failed to initialize workspace at {}: {}",
+                ws_path.display(),
+                e
+            )));
+            return;
+        }
+    };
+
+    let registry = ToolRegistry::new();
+    let reg_res = (|| -> cortex_core::Result<()> {
+        registry.register(Arc::new(tools::ReadFileTool::new(ws.clone())))?;
+        registry.register(Arc::new(tools::WriteFileTool::new(ws.clone())))?;
+        registry.register(Arc::new(tools::ListDirTool::new(ws.clone())))?;
+        registry.register(Arc::new(tools::ShellTool::new(ws.clone())))?;
+        registry.register(Arc::new(tools::GitStatusTool::new(ws.clone())))?;
+        registry.register(Arc::new(tools::GitDiffTool::new(ws.clone())))?;
+        registry.register(Arc::new(tools::GitCommitTool::new(ws.clone())))?;
+        registry.register(Arc::new(tools::GitLogTool::new(ws.clone())))?;
+        registry.register(Arc::new(tools::GitBranchTool::new(ws.clone())))?;
+        Ok(())
+    })();
+
+    if let Err(e) = reg_res {
+        let _ = sender.send(ChatAgentUpdate::Error(format!(
+            "Failed to configure tools: {}",
+            e
+        )));
+        return;
+    }
+
+    let provider = match create_model_provider(&model, api_key, base_url) {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = sender.send(ChatAgentUpdate::Error(format!(
+                "Failed to instantiate model provider: {}",
+                e
+            )));
+            return;
+        }
+    };
+
+    match provider.is_configured() {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = sender.send(ChatAgentUpdate::Error(format!(
+                "Model provider '{}' for model '{}' is not configured.\n\
+                 Please configure your API key in Portals (Tab 8) or set OPENAI_API_KEY / ANTHROPIC_API_KEY.",
+                provider.descriptor().provider,
+                model
+            )));
+            return;
+        }
+        Err(e) => {
+            let _ = sender.send(ChatAgentUpdate::Error(format!(
+                "Provider configuration check failed: {}",
+                e
+            )));
+            return;
+        }
+    }
+
+    let mut context = AgentContext::new(&prompt).with_workspace(ws);
+    let run_id = context.run_id.to_string();
+
+    let _ = sender.send(ChatAgentUpdate::Started {
+        run_id: run_id.clone(),
+        model: model.clone(),
+    });
+
+    let agent_loop = AgentLoop::new(15)
+        .with_cancellation_token(cancel_token)
+        .with_store_optional(store);
+
+    match agent_loop.run(&mut context, &*provider, &registry) {
+        Ok(res) => {
+            let _ = sender.send(ChatAgentUpdate::Completed(Box::new(res)));
+        }
+        Err(cortex_core::CortexError::Cancelled(reason)) => {
+            let _ = sender.send(ChatAgentUpdate::Cancelled(reason));
+        }
+        Err(e) => {
+            let _ = sender.send(ChatAgentUpdate::Error(e.to_string()));
+        }
     }
 }
 
@@ -291,6 +1167,12 @@ mod tests {
         app.set_tab(ActiveTab::Tasks);
         assert_eq!(app.active_tab, ActiveTab::Tasks);
         assert!(!app.tasks.is_empty());
+
+        app.set_tab(ActiveTab::Chat);
+        assert_eq!(app.active_tab, ActiveTab::Chat);
+
+        app.set_tab(ActiveTab::Portals);
+        assert_eq!(app.active_tab, ActiveTab::Portals);
     }
 
     #[test]
@@ -305,5 +1187,95 @@ mod tests {
         // Overflow safe on empty list
         app.next_item();
         assert_eq!(app.selected_run_idx, 0);
+    }
+
+    #[test]
+    fn test_portal_activation_and_deletion() {
+        let mut app = App::new(None);
+        assert!(!app.portals.is_empty());
+        assert!(app.portals[0].is_active);
+
+        // Switch active portal
+        app.selected_portal_idx = 1;
+        app.activate_selected_portal();
+        assert!(!app.portals[0].is_active);
+        assert!(app.portals[1].is_active);
+
+        // Delete portal
+        let count_before = app.portals.len();
+        app.delete_selected_portal();
+        assert_eq!(app.portals.len(), count_before - 1);
+    }
+
+    #[test]
+    fn test_portal_editing_flow() {
+        let mut app = App::new(None);
+        app.selected_portal_idx = 0;
+
+        app.start_editing_key();
+        assert_eq!(app.portal_input_mode, PortalInputMode::EditingKey);
+        app.portal_input_buffer = "sk-test-custom-key".to_string();
+        app.confirm_portal_input();
+
+        assert_eq!(app.portal_input_mode, PortalInputMode::Normal);
+        assert_eq!(
+            app.portals[0].api_key,
+            Some("sk-test-custom-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_portal_adding_flow() {
+        let mut app = App::new(None);
+        let count_before = app.portals.len();
+
+        app.start_adding_portal();
+        assert_eq!(
+            app.portal_input_mode,
+            PortalInputMode::Adding {
+                field: PortalField::Name
+            }
+        );
+
+        app.portal_input_buffer = "My Custom Ollama".to_string();
+        app.confirm_portal_input();
+        assert_eq!(
+            app.portal_input_mode,
+            PortalInputMode::Adding {
+                field: PortalField::Model
+            }
+        );
+
+        app.portal_input_buffer = "ollama/deepseek-r1".to_string();
+        app.confirm_portal_input();
+        assert_eq!(
+            app.portal_input_mode,
+            PortalInputMode::Adding {
+                field: PortalField::BaseUrl
+            }
+        );
+
+        app.portal_input_buffer = "http://127.0.0.1:11434/v1".to_string();
+        app.confirm_portal_input();
+        assert_eq!(
+            app.portal_input_mode,
+            PortalInputMode::Adding {
+                field: PortalField::ApiKey
+            }
+        );
+
+        app.portal_input_buffer = "".to_string();
+        app.confirm_portal_input();
+
+        assert_eq!(app.portal_input_mode, PortalInputMode::Normal);
+        assert_eq!(app.portals.len(), count_before + 1);
+        let added = app.portals.last().unwrap();
+        assert_eq!(added.name, "My Custom Ollama");
+        assert_eq!(added.model_name, "ollama/deepseek-r1");
+        assert_eq!(
+            added.base_url,
+            Some("http://127.0.0.1:11434/v1".to_string())
+        );
+        assert!(added.is_active);
     }
 }

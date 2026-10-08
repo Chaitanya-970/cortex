@@ -30,9 +30,6 @@ coverage/
 *.profdata
 lcov.info
 
-# Release staging
-artifacts/
-dist/
 
 # Document files
 *.docx

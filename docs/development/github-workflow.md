@@ -19,7 +19,7 @@ Merge
   ↓
 main
   ↓
-Nightly / Release
+Nightly Verification
 ```
 
 Do not push directly to main.
