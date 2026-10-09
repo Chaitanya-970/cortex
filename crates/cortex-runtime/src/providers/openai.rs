@@ -173,6 +173,12 @@ impl ModelProvider for OpenAiCompatibleProvider {
     }
 
     fn generate(&self, context: &AgentContext) -> Result<ModelOutput> {
+        if context.is_cancelled() {
+            return Err(CortexError::Cancelled(
+                "agent execution cancelled by request".to_string(),
+            ));
+        }
+
         let messages = self.format_messages(context);
         let tools = self.format_tools(context);
 
@@ -326,6 +332,11 @@ impl ModelProvider for OpenAiCompatibleProvider {
         let mut tool_calls_builder: Vec<(String, String, String)> = Vec::new();
 
         for line_res in reader.lines() {
+            if context.is_cancelled() {
+                return Err(CortexError::Cancelled(
+                    "model streaming cancelled by request".to_string(),
+                ));
+            }
             let line = match line_res {
                 Ok(l) => l,
                 Err(_) => break,
@@ -360,7 +371,7 @@ impl ModelProvider for OpenAiCompatibleProvider {
                                 {
                                     if !content.is_empty() {
                                         accumulated_content.push_str(content);
-                                        let _ = on_token(content);
+                                        on_token(content)?;
                                     }
                                 }
                                 if let Some(tc_array) =

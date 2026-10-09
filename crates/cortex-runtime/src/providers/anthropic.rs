@@ -131,6 +131,12 @@ impl ModelProvider for AnthropicProvider {
     }
 
     fn generate(&self, context: &AgentContext) -> Result<ModelOutput> {
+        if context.is_cancelled() {
+            return Err(CortexError::Cancelled(
+                "agent execution cancelled by request".to_string(),
+            ));
+        }
+
         let api_key = self.api_key.as_ref().ok_or_else(|| {
             CortexError::Internal(
                 "Anthropic API key is not configured. Set ANTHROPIC_API_KEY environment variable."

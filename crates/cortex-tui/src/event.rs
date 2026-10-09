@@ -8,6 +8,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         if app.active_tab == ActiveTab::Chat {
             if app.chat_is_running {
+                if app.is_chat_cancelling() {
+                    app.should_quit = true;
+                    return;
+                }
                 app.cancel_chat_agent();
                 return;
             } else if !app.chat_input.is_empty() {
@@ -428,5 +432,27 @@ mod tests {
         };
         handle_key(&mut app, alt_enter);
         assert_eq!(app.chat_input, "line 1\n\n");
+    }
+
+    #[test]
+    fn test_double_ctrl_c_force_quits_running_agent() {
+        let mut app = App::new(None);
+        let cancel_token = cortex_runtime::CancellationToken::new();
+        let (_tx, rx) = std::sync::mpsc::channel();
+        app.chat_handle = Some(crate::app::AgentExecutionHandle {
+            cancel_token,
+            receiver: rx,
+            run_id: Some("run_test".to_string()),
+        });
+        app.chat_is_running = true;
+
+        // First Ctrl+C triggers graceful cancellation without quitting
+        handle_key(&mut app, make_ctrl_key(KeyCode::Char('c')));
+        assert!(!app.should_quit);
+        assert!(app.is_chat_cancelling());
+
+        // Second Ctrl+C forces quit immediately
+        handle_key(&mut app, make_ctrl_key(KeyCode::Char('c')));
+        assert!(app.should_quit);
     }
 }

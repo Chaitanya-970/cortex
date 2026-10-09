@@ -1,5 +1,6 @@
 //! Tool trait, definition contracts, schema validation, and tool registry.
 
+use crate::agent::CancellationToken;
 use cortex_core::{CortexError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -124,6 +125,15 @@ pub trait Tool: Send + Sync {
 
     /// Execute the tool with validated JSON input arguments.
     fn execute(&self, input: &serde_json::Value) -> Result<ToolResult>;
+
+    /// Execute the tool with validated JSON input arguments and an optional cooperative cancellation token.
+    fn execute_with_cancellation(
+        &self,
+        input: &serde_json::Value,
+        _cancellation_token: Option<&CancellationToken>,
+    ) -> Result<ToolResult> {
+        self.execute(input)
+    }
 }
 
 /// Helper function to return human-readable type names of JSON values.
@@ -294,6 +304,19 @@ impl ToolRegistry {
     /// Returns [`CortexError::NotFound`] if the tool is not registered.
     /// Returns [`CortexError::Validation`] if argument schema validation fails.
     pub fn execute(&self, name: &str, input: &serde_json::Value) -> Result<ToolResult> {
+        self.execute_with_cancellation(name, input, None)
+    }
+
+    /// Validate input arguments and execute the specified tool with an optional cooperative cancellation token.
+    ///
+    /// Returns [`CortexError::NotFound`] if the tool is not registered.
+    /// Returns [`CortexError::Validation`] if argument schema validation fails.
+    pub fn execute_with_cancellation(
+        &self,
+        name: &str,
+        input: &serde_json::Value,
+        cancellation_token: Option<&CancellationToken>,
+    ) -> Result<ToolResult> {
         let tool = self
             .get(name)
             .ok_or_else(|| CortexError::NotFound(format!("tool '{}' not found", name)))?;
@@ -309,7 +332,7 @@ impl ToolRegistry {
         validate_schema(&tool.definition().parameters, input)?;
 
         // Execute tool
-        tool.execute(input)
+        tool.execute_with_cancellation(input, cancellation_token)
     }
 }
 

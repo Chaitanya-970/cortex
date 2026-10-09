@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Graceful Cancellation Latency & Process Teardown
+
+#### Fixed
+- Interruptible HTTP streaming in `ModelProvider` implementations: `OpenAiCompatibleProvider` and trait methods poll cooperative cancellation tokens and immediately terminate socket reads and token streaming on cancel.
+- Added `execute_with_cancellation` to `Tool` trait and `ToolRegistry`, making subprocess tools (`shell`, `bash`, `execute_command`) interruptible without blocking the agent loop.
+- Child process tree termination for `shell` execution: killing spawned process trees immediately upon cancellation.
+- Double `Ctrl+C` force-quit support in interactive TUI chat: a second keystroke while cancellation is pending immediately exits the application.
+- Workspace `BackgroundIndexer` cancellation and graceful shutdown during application teardown.
+
 ### AgentManager & Agent Lifecycle State Machine
 
 #### Added
