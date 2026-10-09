@@ -13,6 +13,13 @@ cortex runs replay <id>
 
 cortex bench run [--suite <suite>] [--json] [--report <path>] [--max-iterations <N>]
 
+cortex agent list
+cortex agent create --manifest <path>
+cortex agent start <id>
+cortex agent pause <id>
+cortex agent stop <id>
+cortex agent inspect <id> [--json]
+
 cortex tui [--db <path>]
 ```
 
@@ -113,6 +120,44 @@ cortex bench run --suite coding
 # Output JSON metrics and save Markdown report
 cortex bench run --suite coding --json --report reports/coding.md
 ```
+
+---
+
+## `cortex agent`
+
+Manage persistent agent worker lifecycles and manifest configurations.
+
+```bash
+# List all configured agents and their current status
+cortex agent list
+
+# Create an agent from a YAML manifest
+cortex agent create --manifest ./agents/reviewer.yaml
+
+# Start or resume an agent
+cortex agent start <agent-id>
+
+# Pause a running agent
+cortex agent pause <agent-id>
+
+# Stop a running or paused agent
+cortex agent stop <agent-id>
+
+# Inspect details, configuration, and state for an agent
+cortex agent inspect <agent-id>
+cortex agent inspect <agent-id> --json
+```
+
+### Subcommands
+
+| Subcommand | Description | Arguments / Flags |
+|---|---|---|
+| `list` | List all configured agents in table format | None |
+| `create` | Create an agent from a manifest file | `-m, --manifest <path>` (YAML, JSON, or TOML) |
+| `start` | Start a created agent or resume a paused agent | `<agent-id>` |
+| `pause` | Pause a running agent | `<agent-id>` |
+| `stop` | Stop a running or paused agent | `<agent-id>` |
+| `inspect` | Inspect detailed configuration and state | `<agent-id>`, `--json` (optional) |
 
 ---
 
