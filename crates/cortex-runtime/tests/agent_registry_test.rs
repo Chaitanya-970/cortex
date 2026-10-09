@@ -402,7 +402,7 @@ fn test_registry_compound_queries_and_ranking() {
     .with_capability(AgentCapability::domain("reviewer"))
     .with_tag("security");
 
-    registry.register(desc1).unwrap();
+    registry.register(desc1.clone()).unwrap();
     registry.register(desc2).unwrap();
     registry.register(desc3).unwrap();
 
@@ -449,4 +449,16 @@ fn test_registry_compound_queries_and_ranking() {
     let active_ids: Vec<AgentId> = active_all.into_iter().map(|d| d.id).collect();
     assert!(active_ids.contains(&id1));
     assert!(active_ids.contains(&id2));
+
+    let active_any = registry.find_active_by_any_capability(&["git_commit", "shell"]);
+    assert_eq!(active_any.len(), 1);
+    assert_eq!(active_any[0].id, id1); // desc1 (Running) has git_commit; desc3 has shell but is Stopped
+
+    // 5. Query deduplication in scoring and ranking
+    assert_eq!(
+        desc1.match_score(&["git_diff", "git_diff", "GIT_DIFF", "   git_diff   "]),
+        1
+    );
+    let dup_ranked = registry.rank_by_capabilities(&["read_file", "read_file"]);
+    assert_eq!(dup_ranked[0].1, 1);
 }

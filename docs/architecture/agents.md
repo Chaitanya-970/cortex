@@ -86,7 +86,7 @@ Future multi-agent systems and CLI interfaces build directly on this manager.
   - `find_by_all_capabilities(queries)`: Multi-predicate conjunction query (AND) returning agents that satisfy every capability or tag.
   - `find_by_any_capability(queries)`: Multi-predicate disjunction query (OR) returning agents that satisfy at least one capability or tag.
   - `rank_by_capabilities(queries)` / `find_best_match(queries)`: Score and rank candidate agents by number of matched capabilities for optimal task delegation.
-  - `find_active_by_capability(query)` / `find_active_by_all_capabilities(queries)`: Capability discovery filtered strictly for active workers (`Running`, `Paused`).
+  - `find_active_by_capability(query)` / `find_active_by_all_capabilities(queries)` / `find_active_by_any_capability(queries)`: Capability discovery filtered strictly for active workers (`Running`, `Paused`).
   - `find_by_tag(tag)`: Search agents by operational tags.
   - `list_active()`: Filter for agents currently in active execution states (`Running`, `Paused`).
   - `list_all()`: Enumerate all registered agent descriptors.
