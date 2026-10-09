@@ -567,6 +567,70 @@ impl AgentManager {
             .collect()
     }
 
+    /// Check whether an agent is in an execution state permitting tool execution.
+    ///
+    /// Tool execution is permitted only when an agent is in [`AgentState::Running`].
+    pub fn can_execute_tool(&self, agent_id: &AgentId) -> Result<bool> {
+        let lock = self
+            .agents
+            .read()
+            .map_err(|e| CortexError::Internal(format!("agents lock poisoned: {}", e)))?;
+        let agent = lock
+            .get(agent_id)
+            .ok_or_else(|| CortexError::NotFound(format!("agent '{}' not found", agent_id)))?;
+        Ok(agent.state == AgentState::Running)
+    }
+
+    /// Authorize a tool execution for the specified agent.
+    ///
+    /// Returns a validation error if the agent is not in [`AgentState::Running`], or if the tool is not permitted.
+    pub fn authorize_tool_execution(&self, agent_id: &AgentId, tool_name: &str) -> Result<()> {
+        let lock = self
+            .agents
+            .read()
+            .map_err(|e| CortexError::Internal(format!("agents lock poisoned: {}", e)))?;
+        let agent = lock
+            .get(agent_id)
+            .ok_or_else(|| CortexError::NotFound(format!("agent '{}' not found", agent_id)))?;
+
+        if agent.state != AgentState::Running {
+            return Err(CortexError::Validation(format!(
+                "cannot execute tool '{}' on agent '{}' in state '{}'; only running agents can execute tools",
+                tool_name, agent_id, agent.state
+            )));
+        }
+
+        if !agent.tools.is_empty() && !agent.tools.iter().any(|t| t == tool_name) {
+            return Err(CortexError::Validation(format!(
+                "tool '{}' is not authorized for agent '{}'",
+                tool_name, agent_id
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Reconcile agents left in active or interrupted states after an unhandled process termination or crash.
+    ///
+    /// Transitions all [`AgentState::Running`] agents to [`AgentState::Stopped`].
+    pub fn reconcile_crashed_agents(&self) -> Result<usize> {
+        let mut lock = self
+            .agents
+            .write()
+            .map_err(|e| CortexError::Internal(format!("agents lock poisoned: {}", e)))?;
+
+        let mut reconciled = 0;
+        let now = Utc::now().to_rfc3339();
+        for agent in lock.values_mut() {
+            if agent.state == AgentState::Running {
+                agent.state = AgentState::Stopped;
+                agent.updated_at = now.clone();
+                reconciled += 1;
+            }
+        }
+        Ok(reconciled)
+    }
+
     fn emit_event(&self, event: AgentLifecycleEvent) {
         if let Ok(mut events) = self.events.write() {
             events.push(event.clone());
