@@ -222,10 +222,17 @@ pub fn prepare_verification_command(command: &str) -> String {
     if cfg!(target_os = "windows") {
         let py = detect_python();
         if py != "python3" {
-            if cmd.starts_with("python3 ") {
-                cmd = format!("{} {}", py, &cmd["python3 ".len()..]);
+            if let Some(rest) = cmd.strip_prefix("python3 ") {
+                cmd = format!("{} {}", py, rest);
             } else if cmd == "python3" {
                 cmd = py.to_string();
+            }
+
+            if cmd.contains("&& python3 ") {
+                cmd = cmd.replace("&& python3 ", &format!("&& {} ", py));
+            }
+            if cmd.contains("; python3 ") {
+                cmd = cmd.replace("; python3 ", &format!("; {} ", py));
             }
         }
 

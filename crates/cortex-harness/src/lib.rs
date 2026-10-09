@@ -148,6 +148,13 @@ mod tests {
             assert_eq!(cmd, "python3 test_sample.py");
         }
 
+        let compound = prepare_verification_command("cd dir && python3 test_sample.py");
+        if cfg!(target_os = "windows") {
+            assert!(compound.contains(&format!("&& {} ", py)));
+        } else {
+            assert_eq!(compound, "cd dir && python3 test_sample.py");
+        }
+
         let posix_cmd = "rustc --test src/calc.rs -o /tmp/calc_test && /tmp/calc_test";
         let prepared_posix = prepare_verification_command(posix_cmd);
         if cfg!(target_os = "windows") {
