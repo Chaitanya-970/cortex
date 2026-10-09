@@ -3,9 +3,13 @@
 use regex::Regex;
 
 /// Redactor identifying and masking credentials and sensitive tokens.
+#[derive(Debug, Clone)]
 pub struct Redactor {
     patterns: Vec<Regex>,
 }
+
+/// Alias for [`Redactor`] identifying and masking credentials and sensitive tokens.
+pub type SecretRedactor = Redactor;
 
 impl Redactor {
     /// Create a new [`Redactor`] initialized with security masking patterns.

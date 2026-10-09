@@ -34,7 +34,7 @@ pub use providers::{
     create_model_provider, estimate_cost, AnthropicProvider, OpenAiCompatibleProvider,
 };
 pub use sandbox::{Sandbox, SandboxMode};
-pub use storage::{RunStore, RunSummary};
+pub use storage::{RunStore, RunSummary, SecretRedactor};
 pub use tool::{validate_schema, PermissionLevel, Tool, ToolDefinition, ToolRegistry, ToolResult};
 pub use workspace::Workspace;
 

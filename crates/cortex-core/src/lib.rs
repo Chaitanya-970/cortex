@@ -18,7 +18,7 @@ pub mod settings;
 pub use error::{CortexError, Result};
 pub use event::{EventRecord, ExecutionEvent};
 pub use id::{AgentId, RunId, SessionId};
-pub use redact::Redactor;
+pub use redact::{Redactor, SecretRedactor};
 pub use settings::UserSettings;
 
 /// Current semantic version of the Cortex core library.

@@ -33,6 +33,59 @@ pub struct AgentMessage {
     pub payload: AgentMessagePayload,
 }
 
+impl From<&AgentMessage> for ExecutionEvent {
+    fn from(msg: &AgentMessage) -> Self {
+        let redactor = Redactor::new();
+        let payload_json = serde_json::to_value(&msg.payload).unwrap_or_default();
+        let redacted_payload = redactor.redact_json(&payload_json);
+        ExecutionEvent::InterAgentMessage {
+            run_id: msg.run_id.clone(),
+            message_id: msg.id.clone(),
+            sender: msg.sender.clone(),
+            recipient: msg.recipient.clone(),
+            routing_key: redactor.redact_text(msg.routing_key.as_str()),
+            timestamp: msg.timestamp.clone(),
+            payload: redacted_payload,
+        }
+    }
+}
+
+impl TryFrom<&ExecutionEvent> for AgentMessage {
+    type Error = CortexError;
+
+    fn try_from(event: &ExecutionEvent) -> Result<Self> {
+        match event {
+            ExecutionEvent::InterAgentMessage {
+                run_id,
+                message_id,
+                sender,
+                recipient,
+                routing_key,
+                timestamp,
+                payload,
+            } => {
+                let rkey = RoutingKey::new(routing_key.as_str())?;
+                let payload: AgentMessagePayload = serde_json::from_value(payload.clone())
+                    .map_err(|e| {
+                        CortexError::Internal(format!("failed to deserialize message payload: {e}"))
+                    })?;
+                Ok(Self {
+                    id: message_id.clone(),
+                    run_id: run_id.clone(),
+                    sender: sender.clone(),
+                    recipient: recipient.clone(),
+                    routing_key: rkey,
+                    timestamp: timestamp.clone(),
+                    payload,
+                })
+            }
+            _ => Err(CortexError::Validation(
+                "event is not an InterAgentMessage".into(),
+            )),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Inbox {
     epoch: u64,
