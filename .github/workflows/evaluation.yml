@@ -17,11 +17,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run coding benchmark suite
-        run: cargo run -p cortex-cli -- bench run --suite coding --report eval-coding.md
+        run: cargo run -p cortex-cli --bin cortex -- bench run --suite coding --report eval-coding.md
       - name: Run refactor benchmark suite
-        run: cargo run -p cortex-cli -- bench run --suite refactor --report eval-refactor.md
+        run: cargo run -p cortex-cli --bin cortex -- bench run --suite refactor --report eval-refactor.md
       - name: Run CLI benchmark suite
-        run: cargo run -p cortex-cli -- bench run --suite cli --report eval-cli.md
+        run: cargo run -p cortex-cli --bin cortex -- bench run --suite cli --report eval-cli.md
       - name: Upload evaluation reports
         uses: actions/upload-artifact@v4
         if: always()

@@ -365,3 +365,230 @@ fn test_cli_cron_lifecycle() {
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+#[test]
+fn test_cli_agent_help() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["agent", "--help"])
+        .output()
+        .expect("Failed to execute cortex agent --help");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("list"));
+    assert!(stdout.contains("create"));
+    assert!(stdout.contains("start"));
+    assert!(stdout.contains("stop"));
+    assert!(stdout.contains("pause"));
+    assert!(stdout.contains("inspect"));
+}
+
+#[test]
+fn test_cli_agent_lifecycle_workflow() {
+    let tmp_dir =
+        std::env::temp_dir().join(format!("cortex_agent_cli_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let agents_file = tmp_dir.join("agents.json");
+    let manifest_file = tmp_dir.join("reviewer.yaml");
+
+    let manifest_content = r#"
+name: "reviewer"
+role: "Code Reviewer"
+workspace: "./src"
+policy: "Review pull requests and ensure quality"
+model:
+  provider: "anthropic"
+  model: "claude-3-5-sonnet"
+tools:
+  - read_file
+  - git_diff
+"#;
+    std::fs::write(&manifest_file, manifest_content).unwrap();
+
+    // 1. Initially empty list
+    let list_empty = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args(["agent", "list"])
+        .output()
+        .expect("Failed to run cortex agent list");
+    assert!(list_empty.status.success());
+    let empty_stdout = String::from_utf8_lossy(&list_empty.stdout);
+    assert!(empty_stdout.contains("No registered agents found"));
+
+    // 2. Create agent from manifest
+    let create_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args([
+            "agent",
+            "create",
+            "--manifest",
+            manifest_file.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to run cortex agent create");
+    assert!(create_out.status.success());
+    let create_stdout = String::from_utf8_lossy(&create_out.stdout);
+    assert!(create_stdout.contains("Agent 'reviewer' created successfully"));
+    assert!(create_stdout.contains("ID:"));
+    assert!(create_stdout.contains("Role:      Code Reviewer"));
+    assert!(create_stdout.contains("Status:    created"));
+
+    // Extract generated ID
+    let id_line = create_stdout
+        .lines()
+        .find(|l| l.trim().starts_with("ID:"))
+        .expect("ID line in create output");
+    let agent_id = id_line.split_whitespace().nth(1).unwrap().to_string();
+
+    // 3. List agents - table formatting
+    let list_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args(["agent", "list"])
+        .output()
+        .expect("Failed to run cortex agent list");
+    assert!(list_out.status.success());
+    let list_stdout = String::from_utf8_lossy(&list_out.stdout);
+    assert!(list_stdout.contains("ID"));
+    assert!(list_stdout.contains("NAME"));
+    assert!(list_stdout.contains("STATUS"));
+    assert!(list_stdout.contains("MODEL"));
+    assert!(list_stdout.contains("WORKSPACE"));
+    assert!(list_stdout.contains(&agent_id));
+    assert!(list_stdout.contains("reviewer"));
+    assert!(list_stdout.contains("created"));
+    assert!(list_stdout.contains("claude-3-5-sonnet"));
+
+    // 4. Inspect agent (plain text)
+    let inspect_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args(["agent", "inspect", &agent_id])
+        .output()
+        .expect("Failed to run cortex agent inspect");
+    assert!(inspect_out.status.success());
+    let inspect_stdout = String::from_utf8_lossy(&inspect_out.stdout);
+    assert!(inspect_stdout.contains(&agent_id));
+    assert!(inspect_stdout.contains("reviewer"));
+    assert!(inspect_stdout.contains("Code Reviewer"));
+    assert!(inspect_stdout.contains("Review pull requests"));
+    assert!(inspect_stdout.contains("read_file, git_diff"));
+
+    // 5. Inspect agent (JSON)
+    let json_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args(["agent", "inspect", &agent_id, "--json"])
+        .output()
+        .expect("Failed to run cortex agent inspect --json");
+    assert!(json_out.status.success());
+    let json_stdout = String::from_utf8_lossy(&json_out.stdout);
+    assert!(json_stdout.contains(&format!("\"id\": \"{}\"", agent_id)));
+    assert!(json_stdout.contains("\"name\": \"reviewer\""));
+    assert!(json_stdout.contains("\"state\": \"created\""));
+
+    // 6. Start agent (created -> running)
+    let start_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args(["agent", "start", &agent_id])
+        .output()
+        .expect("Failed to run cortex agent start");
+    assert!(start_out.status.success());
+    assert!(String::from_utf8_lossy(&start_out.stdout).contains("is now running"));
+
+    // 7. Pause agent (running -> paused)
+    let pause_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args(["agent", "pause", &agent_id])
+        .output()
+        .expect("Failed to run cortex agent pause");
+    assert!(pause_out.status.success());
+    assert!(String::from_utf8_lossy(&pause_out.stdout).contains("is now paused"));
+
+    // 8. Resume agent via start (paused -> running)
+    let resume_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args(["agent", "start", &agent_id])
+        .output()
+        .expect("Failed to run cortex agent start (resume)");
+    assert!(resume_out.status.success());
+    assert!(String::from_utf8_lossy(&resume_out.stdout).contains("is now running"));
+
+    // 9. Stop agent (running -> stopped)
+    let stop_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args(["agent", "stop", &agent_id])
+        .output()
+        .expect("Failed to run cortex agent stop");
+    assert!(stop_out.status.success());
+    assert!(String::from_utf8_lossy(&stop_out.stdout).contains("is now stopped"));
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_cli_agent_errors() {
+    let tmp_dir =
+        std::env::temp_dir().join(format!("cortex_agent_err_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+    let agents_file = tmp_dir.join("agents.json");
+
+    // Non-existent agent inspect fails gracefully
+    let inspect_missing = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args(["agent", "inspect", "agent_nonexistent_999"])
+        .output()
+        .expect("Failed to run cortex agent inspect");
+    assert!(!inspect_missing.status.success());
+    let stderr = String::from_utf8_lossy(&inspect_missing.stderr);
+    assert!(stderr.contains("not found"));
+
+    // Non-existent manifest create fails gracefully
+    let create_missing = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args(["agent", "create", "--manifest", "non_existent_file.yaml"])
+        .output()
+        .expect("Failed to run cortex agent create");
+    assert!(!create_missing.status.success());
+    let create_err = String::from_utf8_lossy(&create_missing.stderr);
+    assert!(create_err.contains("Failed to load manifest") || create_err.contains("not found"));
+
+    // Create an agent and test invalid state transition (pausing a created agent)
+    let manifest_file = tmp_dir.join("agent_err.yaml");
+    std::fs::write(
+        &manifest_file,
+        "name: err-agent\nworkspace: .\nmodel: gpt-4o\n",
+    )
+    .unwrap();
+    let create_ok = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args([
+            "agent",
+            "create",
+            "--manifest",
+            manifest_file.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to run cortex agent create");
+    assert!(create_ok.status.success());
+    let create_stdout = String::from_utf8_lossy(&create_ok.stdout);
+    let agent_id = create_stdout
+        .lines()
+        .find(|l| l.trim().starts_with("ID:"))
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap();
+
+    // Pausing a created (non-running) agent must fail gracefully with descriptive error
+    let pause_err = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .env("CORTEX_AGENTS_PATH", &agents_file)
+        .args(["agent", "pause", agent_id])
+        .output()
+        .expect("Failed to run cortex agent pause");
+    assert!(!pause_err.status.success());
+    let pause_stderr = String::from_utf8_lossy(&pause_err.stderr);
+    assert!(pause_stderr.contains("only running agents can be paused"));
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}

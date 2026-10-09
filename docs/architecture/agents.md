@@ -72,3 +72,42 @@ Direct transitions from `Stopped` or `Failed` directly to `Running` without goin
 - `subscribe()`: Receive a stream of `AgentLifecycleEvent` updates (`AgentCreated`, `AgentStarted`, `AgentPaused`, `AgentResumed`, `AgentStopped`, `AgentFailed`).
 
 Future multi-agent systems and CLI interfaces build directly on this manager.
+
+## Inter-Agent Coordination & Message Bus
+
+`AgentManager` integrates deterministic inter-agent messaging and task delegation directly into its coordination state:
+
+### Endpoint Issuance
+- **Authenticity**: Communication handles (`AgentEndpoint`) are created by trusted host code calling `manager.connect_agent(agent_id, routes, capacity)`.
+- **State Constraint**: Only agents in the `Running` lifecycle state can be connected. Exactly one active endpoint is allowed per agent at a time.
+- **Capacity & Routes**: Each endpoint specifies an inbox capacity between 1 and 1024 messages, and 1 to 128 accepted `RoutingKey` values.
+
+### Bounded FIFO Delivery & Exact Routes
+- **Enqueue Ordering**: Messages are delivered to recipient queues in the order of successful enqueueing.
+- **Exact Routing**: Routing keys are 1..=128 bytes containing only ASCII alphanumeric characters, dots, underscores, or hyphens (`RoutingKey`). Senders must target an exact routing key registered by the recipient; wildcards, broadcasts, and pattern matching are rejected.
+- **Backpressure & Limits**: Full inboxes, a full trace buffer, and payloads exceeding 64 KiB reject sends with `CortexError::Validation`. Accepted messages remain queued until received or discarded by endpoint revocation.
+
+### Hierarchy & Supervisor Relationships
+- **Topology**: `manager.assign_worker(supervisor, worker)` establishes directed supervisor/worker trees. Nested supervisor hierarchies are supported.
+- **Cycle Prevention**: The hierarchy graph is traversed upon assignment; circular dependencies and self-assignment are strictly rejected.
+- **Pending Work Invariants**: A worker cannot be reassigned to a new supervisor while it has pending task delegations.
+
+### Task Correlation & Validation
+- **Correlation Lifecycle**: Task delegations (`TaskRequest`, `TaskResult`, `TaskFailed`) require a `task_id` (1..=128 bytes) unique to the execution `RunId`.
+- **Delegation Rules**:
+  - `TaskRequest` may only be sent by a direct supervisor to its assigned worker.
+  - `TaskResult` and `TaskFailed` must be sent by the worker back to its original supervisor, matching the active delegation and `RunId` exactly once.
+  - Informational `Notification` messages do not require supervisor relationships.
+- **Run Completion**: `manager.finish_coordination_run(run_id)` removes completed and cancelled task correlations once a run permanently finishes; pending work prevents cleanup. Host code must never reuse that run ID. The manager does not retain completed-run tombstones.
+
+### Lifecycle Invalidation & Revocation
+- **Pause**: Pausing an agent wakes any pending `recv()` future with an error and preserves queued messages. When resumed, the endpoint can continue receiving.
+- **Stop, Fail, Restart, Prepare**: These operations revoke existing endpoints, cancel pending task correlations involving the agent, discard its queued messages, and wake waiting receivers. Subsequent receives fail lifecycle validation or report endpoint cancellation. This does not undo work already performed by another agent.
+- **Drop**: Dropping an `AgentEndpoint` closes its inbox, revoking delivery.
+- **Removal**: Removing an agent also severs its hierarchy parent/child relationships.
+
+### Lock Ordering
+To prevent deadlocks under heavy multi-agent concurrency, Cortex enforces a strict hierarchy:
+1. `AgentManager.agents` (`RwLock`): Acquired first for agent lifecycle validation and state checks.
+2. `AgentManager.coordination` (`Mutex`): Acquired second for inbox operations, topology modifications, task correlation, and event emission.
+3. Wakers (`Waker::wake`): Invoked only **after** releasing both locks, ensuring receivers never resume while locks are held.

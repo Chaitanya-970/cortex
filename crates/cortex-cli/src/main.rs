@@ -4,12 +4,13 @@
 //! including execution run inspection and tracing queries.
 
 use clap::{Parser, Subcommand};
-use cortex_core::{JobId, RunId, VERSION};
+use cortex_core::{AgentId, CortexError, JobId, RunId, VERSION};
 use cortex_runtime::{
-    create_model_provider, scheduler::OverlapPolicy, tools, AgentContext, AgentLoop, CortexConfig,
-    McpManager, RunStore, RunSummary, SchedulerEngine, ToolRegistry, Workspace,
+    create_model_provider, scheduler::OverlapPolicy, tools, AgentContext, AgentLoop, AgentManager,
+    AgentManifest, AgentState, CortexConfig, McpManager, RunStore, RunSummary, SchedulerEngine,
+    ToolRegistry, Workspace,
 };
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -108,6 +109,53 @@ enum Commands {
     Cron {
         #[command(subcommand)]
         action: CronCommands,
+    },
+
+    /// Manage persistent agent worker lifecycles.
+    Agent {
+        #[command(subcommand)]
+        action: AgentCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum AgentCommands {
+    /// List all configured agents and their current status.
+    List,
+
+    /// Create an agent from a manifest file (YAML, JSON, or TOML).
+    Create {
+        /// Path to the agent manifest file.
+        #[arg(short, long)]
+        manifest: PathBuf,
+    },
+
+    /// Start or resume an agent worker.
+    Start {
+        /// Identifier of the agent to start.
+        agent_id: String,
+    },
+
+    /// Stop a running or paused agent worker.
+    Stop {
+        /// Identifier of the agent to stop.
+        agent_id: String,
+    },
+
+    /// Pause a running agent worker.
+    Pause {
+        /// Identifier of the agent to pause.
+        agent_id: String,
+    },
+
+    /// Inspect details, configuration, and state of an agent.
+    Inspect {
+        /// Identifier of the agent to inspect.
+        agent_id: String,
+
+        /// Output the agent inspection details in JSON format.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -235,6 +283,258 @@ fn default_db_path() -> PathBuf {
         return PathBuf::from(env_path);
     }
     cortex_core::settings::cortex_home_dir().join("cortex.db")
+}
+
+fn default_agents_path() -> PathBuf {
+    if let Ok(env_path) = std::env::var("CORTEX_AGENTS_PATH") {
+        return PathBuf::from(env_path);
+    }
+    cortex_core::settings::cortex_home_dir().join("agents.json")
+}
+
+fn agent_list() -> Result<(), Box<dyn std::error::Error>> {
+    let agents_path = default_agents_path();
+    let manager = AgentManager::new();
+    let _ = manager.load_from_file(&agents_path);
+
+    let agents = manager.list();
+    if agents.is_empty() {
+        println!("No registered agents found.");
+        println!("Use 'cortex agent create --manifest <path>' to register an agent.");
+        return Ok(());
+    }
+
+    println!(
+        "{:<26} {:<18} {:<12} {:<24} WORKSPACE",
+        "ID", "NAME", "STATUS", "MODEL"
+    );
+    println!("{:-<95}", "");
+
+    for agent in agents {
+        let model_display = format!("{} ({})", agent.model.model, agent.model.provider);
+        println!(
+            "{:<26} {:<18} {:<12} {:<24} {}",
+            agent.id.as_str(),
+            agent.name,
+            agent.state,
+            model_display,
+            agent.workspace.display()
+        );
+    }
+
+    Ok(())
+}
+
+fn agent_create(manifest_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let manifest = match AgentManifest::from_file(manifest_path) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!(
+                "Error: Failed to load manifest from '{}': {}",
+                manifest_path.display(),
+                e
+            );
+            std::process::exit(1);
+        }
+    };
+
+    let agents_path = default_agents_path();
+    let manager = AgentManager::new();
+    let _ = manager.load_from_file(&agents_path);
+
+    let agent = match manager.create(manifest) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(e) = manager.save_to_file(&agents_path) {
+        eprintln!("Error: Failed to save agent state: {}", e);
+        std::process::exit(1);
+    }
+
+    println!("Agent '{}' created successfully.", agent.name);
+    println!("  ID:        {}", agent.id);
+    println!("  Role:      {}", agent.role);
+    println!("  Status:    {}", agent.state);
+    println!(
+        "  Model:     {} ({})",
+        agent.model.model, agent.model.provider
+    );
+    println!("  Workspace: {}", agent.workspace.display());
+
+    Ok(())
+}
+
+fn agent_start(agent_id_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let agent_id = AgentId::from(agent_id_str);
+    let agents_path = default_agents_path();
+    let manager = AgentManager::new();
+    let _ = manager.load_from_file(&agents_path);
+
+    let target_agent = match manager.inspect(&agent_id) {
+        Ok(a) => a,
+        Err(CortexError::NotFound(msg)) => {
+            eprintln!("Error: {}", msg);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let action_res = if target_agent.state == AgentState::Paused {
+        manager.resume(&agent_id)
+    } else {
+        manager.start(&agent_id)
+    };
+
+    match action_res {
+        Ok(()) => {
+            let _ = manager.save_to_file(&agents_path);
+            let updated = manager.inspect(&agent_id)?;
+            println!(
+                "Agent '{}' ({}) is now {}.",
+                updated.name, updated.id, updated.state
+            );
+            Ok(())
+        }
+        Err(CortexError::NotFound(msg)) => {
+            eprintln!("Error: {}", msg);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn agent_pause(agent_id_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let agent_id = AgentId::from(agent_id_str);
+    let agents_path = default_agents_path();
+    let manager = AgentManager::new();
+    let _ = manager.load_from_file(&agents_path);
+
+    let _ = match manager.inspect(&agent_id) {
+        Ok(a) => a,
+        Err(CortexError::NotFound(msg)) => {
+            eprintln!("Error: {}", msg);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    match manager.pause(&agent_id) {
+        Ok(()) => {
+            let _ = manager.save_to_file(&agents_path);
+            let updated = manager.inspect(&agent_id)?;
+            println!(
+                "Agent '{}' ({}) is now {}.",
+                updated.name, updated.id, updated.state
+            );
+            Ok(())
+        }
+        Err(CortexError::NotFound(msg)) => {
+            eprintln!("Error: {}", msg);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn agent_stop(agent_id_str: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let agent_id = AgentId::from(agent_id_str);
+    let agents_path = default_agents_path();
+    let manager = AgentManager::new();
+    let _ = manager.load_from_file(&agents_path);
+
+    let _ = match manager.inspect(&agent_id) {
+        Ok(a) => a,
+        Err(CortexError::NotFound(msg)) => {
+            eprintln!("Error: {}", msg);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    match manager.stop(&agent_id) {
+        Ok(()) => {
+            let _ = manager.save_to_file(&agents_path);
+            let updated = manager.inspect(&agent_id)?;
+            println!(
+                "Agent '{}' ({}) is now {}.",
+                updated.name, updated.id, updated.state
+            );
+            Ok(())
+        }
+        Err(CortexError::NotFound(msg)) => {
+            eprintln!("Error: {}", msg);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn agent_inspect(agent_id_str: &str, json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let agent_id = AgentId::from(agent_id_str);
+    let agents_path = default_agents_path();
+    let manager = AgentManager::new();
+    let _ = manager.load_from_file(&agents_path);
+
+    let agent = match manager.inspect(&agent_id) {
+        Ok(a) => a,
+        Err(CortexError::NotFound(msg)) => {
+            eprintln!("Error: {}", msg);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&agent)?);
+    } else {
+        println!("Agent ID:    {}", agent.id);
+        println!("Name:        {}", agent.name);
+        println!("Role:        {}", agent.role);
+        println!("Status:      {}", agent.state);
+        println!(
+            "Model:       {} ({})",
+            agent.model.model, agent.model.provider
+        );
+        println!("Workspace:   {}", agent.workspace.display());
+        if let Some(prompt) = &agent.system_prompt {
+            println!("Prompt:      {}", prompt);
+        }
+        let tools_display = if agent.tools.is_empty() {
+            "none".to_string()
+        } else {
+            agent.tools.join(", ")
+        };
+        println!("Tools:       {}", tools_display);
+        println!("Created At:  {}", agent.created_at);
+        println!("Updated At:  {}", agent.updated_at);
+    }
+
+    Ok(())
 }
 
 fn list_runs(store: &RunStore, limit: usize) -> Result<(), Box<dyn std::error::Error>> {
@@ -932,6 +1232,44 @@ fn main() {
                 }
             }
         },
+        Some(Commands::Agent { action }) => match action {
+            AgentCommands::List => {
+                if let Err(e) = agent_list() {
+                    eprintln!("Error listing agents: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            AgentCommands::Create { manifest } => {
+                if let Err(e) = agent_create(&manifest) {
+                    eprintln!("Error creating agent: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            AgentCommands::Start { agent_id } => {
+                if let Err(e) = agent_start(&agent_id) {
+                    eprintln!("Error starting agent: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            AgentCommands::Stop { agent_id } => {
+                if let Err(e) = agent_stop(&agent_id) {
+                    eprintln!("Error stopping agent: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            AgentCommands::Pause { agent_id } => {
+                if let Err(e) = agent_pause(&agent_id) {
+                    eprintln!("Error pausing agent: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            AgentCommands::Inspect { agent_id, json } => {
+                if let Err(e) = agent_inspect(&agent_id, json) {
+                    eprintln!("Error inspecting agent: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        },
         Some(Commands::Runs { action }) => {
             let db_path = default_db_path();
             let store = match RunStore::open(&db_path) {
@@ -1361,6 +1699,83 @@ mod tests {
                 action: CronCommands::Delete { id, .. },
             }) => {
                 assert_eq!(id, "job_12345");
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_agent_subcommands() {
+        // list
+        let args_list = vec!["cortex", "agent", "list"];
+        let parsed_list = Cli::try_parse_from(args_list).unwrap();
+        assert!(matches!(
+            parsed_list.command,
+            Some(Commands::Agent {
+                action: AgentCommands::List
+            })
+        ));
+
+        // create
+        let args_create = vec!["cortex", "agent", "create", "--manifest", "./reviewer.yaml"];
+        let parsed_create = Cli::try_parse_from(args_create).unwrap();
+        match parsed_create.command {
+            Some(Commands::Agent {
+                action: AgentCommands::Create { manifest },
+            }) => {
+                assert_eq!(manifest, PathBuf::from("./reviewer.yaml"));
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+
+        // start
+        let args_start = vec!["cortex", "agent", "start", "agent_123"];
+        let parsed_start = Cli::try_parse_from(args_start).unwrap();
+        match parsed_start.command {
+            Some(Commands::Agent {
+                action: AgentCommands::Start { agent_id },
+            }) => {
+                assert_eq!(agent_id, "agent_123");
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+
+        // pause
+        let args_pause = vec!["cortex", "agent", "pause", "agent_123"];
+        let parsed_pause = Cli::try_parse_from(args_pause).unwrap();
+        match parsed_pause.command {
+            Some(Commands::Agent {
+                action: AgentCommands::Pause { agent_id },
+            }) => {
+                assert_eq!(agent_id, "agent_123");
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+
+        // stop
+        let args_stop = vec!["cortex", "agent", "stop", "agent_123"];
+        let parsed_stop = Cli::try_parse_from(args_stop).unwrap();
+        match parsed_stop.command {
+            Some(Commands::Agent {
+                action: AgentCommands::Stop { agent_id },
+            }) => {
+                assert_eq!(agent_id, "agent_123");
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+
+        // inspect
+        let args_inspect = vec!["cortex", "agent", "inspect", "agent_123", "--json"];
+        let parsed_inspect = Cli::try_parse_from(args_inspect).unwrap();
+        match parsed_inspect.command {
+            Some(Commands::Agent {
+                action:
+                    AgentCommands::Inspect {
+                        agent_id,
+                        json: true,
+                    },
+            }) => {
+                assert_eq!(agent_id, "agent_123");
             }
             _ => panic!("unexpected command parsed"),
         }

@@ -68,7 +68,21 @@ Cortex employs defense-in-depth through containerized and operating-system-level
 
 ---
 
-## 4. Security Testing Requirements
+## 4. Inter-Agent Communication Boundaries
+
+Cortex provides in-process messaging and supervisor/worker task delegation through `AgentManager` and `AgentEndpoint`:
+
+- **Trusted Host Authority**: Access to `AgentManager` (registration, endpoint issuance, worker assignment, and run completion) remains strictly in trusted host code. Model outputs cannot access the manager or issue endpoints.
+- **Endpoint-Bound Sender Identity**: Senders cannot forge identity; each `AgentEndpoint` strictly stamps the authenticated `AgentId` of the sending agent upon enqueueing.
+- **Model Output Separation**: Model-generated text cannot grant supervisor roles, assign workers, or expand permissions.
+- **No Capability Transfer**: Delegating a task does not copy, elevate, or transfer permissions from supervisor to worker. Host execution must still use existing tool permission and workspace checks.
+- **No Automatic Tool Execution**: Messages carry typed data. Receiving an `AgentMessage` or `TaskRequest` does not execute tools or perform external side effects.
+- **Envelope Deserialization**: Deserializing a message envelope creates data, not authority or verified identity. Envelopes carry no cryptographic authentication.
+- **In-Process Boundary Scope**: Inter-agent messaging is an in-process runtime coordination abstraction; it does not isolate malicious host code with direct memory access to `AgentManager`.
+
+---
+
+## 5. Security Testing Requirements
 
 Every component that touches I/O, process execution, or file paths must include dedicated security test coverage:
 
@@ -82,7 +96,7 @@ Every component that touches I/O, process execution, or file paths must include 
 
 ---
 
-## 5. Reporting a Vulnerability
+## 6. Reporting a Vulnerability
 
 If you discover a security vulnerability in Cortex:
 
