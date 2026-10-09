@@ -68,10 +68,25 @@ Direct transitions from `Stopped` or `Failed` directly to `Running` without goin
 - `restart(agent_id)`: Reset a stopped or failed agent to `Ready`.
 - `inspect(agent_id)`: Query agent configuration and state.
 - `list()`: Return all registered agents.
+- `registry()`: Access the thread-safe `AgentRegistry` catalog for capability discovery.
 - `remove(agent_id)`: Remove a stopped, failed, or created agent. Active agents cannot be removed until stopped.
 - `subscribe()`: Receive a stream of `AgentLifecycleEvent` updates (`AgentCreated`, `AgentStarted`, `AgentPaused`, `AgentResumed`, `AgentStopped`, `AgentFailed`).
 
 Future multi-agent systems and CLI interfaces build directly on this manager.
+
+## AgentRegistry & Capability Discovery
+
+`AgentRegistry` provides a read-optimized, thread-safe directory service (`Arc<RwLock<HashMap<AgentId, AgentDescriptor>>>`) for peer discovery and capability querying:
+
+- **`AgentDescriptor`**: Read-only public snapshot containing `id`, `name`, `role`, `status`, `capabilities`, `workspace_root`, and `tags`.
+- **`AgentCapability`**: Typed qualifications covering tools (`Tool("read_file")`, wildcard `Tool("git_*")`), model tiers (`ModelTier("fast")`, `ModelTier("reasoning")`, `ModelTier("coding")`), and domain specializations (`Domain("researcher")`, `Domain("coder")`, `Domain("reviewer")`, `Domain("planner")`).
+- **Query APIs**:
+  - `find_by_role(role)`: Search agents by operational role (case-insensitive substring and exact matching).
+  - `find_by_capability(query)`: Search agents matching tool names, wildcard patterns, model tiers, or domain specializations.
+  - `find_by_tag(tag)`: Search agents by operational tags.
+  - `list_active()`: Filter for agents currently in active execution states (`Running`, `Paused`).
+  - `list_all()`: Enumerate all registered agent descriptors.
+- **Synchronization**: `AgentManager` automatically keeps the registry synchronized across all worker creation, lifecycle state transitions, and removal operations. Registries can also ingest `AgentLifecycleEvent` streams directly via `handle_event()`.
 
 ## Inter-Agent Coordination & Message Bus
 

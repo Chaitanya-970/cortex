@@ -5,6 +5,7 @@ pub mod execution;
 pub mod lifecycle;
 pub mod manager;
 pub mod message;
+pub mod registry;
 
 pub use coordination::{AgentEndpoint, AgentMessage};
 pub use execution::{
@@ -14,3 +15,4 @@ pub use execution::{
 pub use lifecycle::{AgentLifecycleEvent, AgentState};
 pub use manager::{Agent, AgentManager, AgentManifest, AgentModelConfig, AgentPermissions};
 pub use message::{AgentMessagePayload, RoutingKey};
+pub use registry::{AgentCapability, AgentDescriptor, AgentRegistry};
