@@ -1,6 +1,7 @@
 //! AgentManager coordinator for managing persistent agent worker lifecycles.
 
 use super::lifecycle::{AgentLifecycleEvent, AgentState};
+use crate::storage::{AgentCheckpointRecord, AgentRecord, RunStore};
 use chrono::Utc;
 use cortex_core::{AgentId, CortexError, Result};
 use serde::{Deserialize, Serialize};
@@ -113,6 +114,9 @@ pub struct AgentManifest {
     /// Capability and operational permission boundaries.
     #[serde(default)]
     pub permissions: AgentPermissions,
+    /// Whether to automatically resume on runtime boot if interrupted.
+    #[serde(default)]
+    pub auto_resume: bool,
 }
 
 impl AgentManifest {
@@ -132,6 +136,7 @@ impl AgentManifest {
             model,
             tools: Vec::new(),
             permissions: AgentPermissions::standard(),
+            auto_resume: false,
         }
     }
 
@@ -157,6 +162,42 @@ impl AgentManifest {
     pub fn with_permissions(mut self, permissions: AgentPermissions) -> Self {
         self.permissions = permissions;
         self
+    }
+
+    /// Attach an auto-resume flag on daemon restart.
+    pub fn with_auto_resume(mut self, auto_resume: bool) -> Self {
+        self.auto_resume = auto_resume;
+        self
+    }
+
+    /// Deserialize an [`AgentManifest`] from a YAML string.
+    pub fn from_yaml_str(yaml_str: &str) -> Result<Self> {
+        if let Ok(yaml_manifest) = super::manifest::AgentYamlManifest::from_yaml_str(yaml_str) {
+            return yaml_manifest.into_manifest();
+        }
+
+        serde_yaml::from_str(yaml_str)
+            .map_err(|e| CortexError::Validation(format!("invalid yaml manifest: {}", e)))
+    }
+
+    /// Deserialize an [`AgentManifest`] from a YAML file.
+    pub fn from_yaml_file(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            CortexError::NotFound(format!(
+                "failed to read manifest file '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+        Self::from_yaml_str(&content)
+    }
+
+    /// Serialize this [`AgentManifest`] to a YAML string.
+    pub fn to_yaml_string(&self) -> Result<String> {
+        serde_yaml::to_string(self).map_err(|e| {
+            CortexError::Internal(format!("failed to serialize manifest to yaml: {}", e))
+        })
     }
 
     /// Deserialize an [`AgentManifest`] from a JSON string.
@@ -207,6 +248,9 @@ pub struct Agent {
     pub tools: Vec<String>,
     /// Granted permission boundaries.
     pub permissions: AgentPermissions,
+    /// Whether to automatically resume execution upon runtime reboot.
+    #[serde(default)]
+    pub auto_resume: bool,
     /// Creation timestamp in ISO 8601 UTC.
     pub created_at: String,
     /// Last state transition timestamp in ISO 8601 UTC.
@@ -219,6 +263,7 @@ pub struct AgentManager {
     agents: Arc<RwLock<HashMap<AgentId, Agent>>>,
     events: Arc<RwLock<Vec<AgentLifecycleEvent>>>,
     subscribers: Arc<Mutex<Vec<Sender<AgentLifecycleEvent>>>>,
+    store: Option<Arc<RunStore>>,
 }
 
 impl AgentManager {
@@ -228,7 +273,87 @@ impl AgentManager {
             agents: Arc::new(RwLock::new(HashMap::new())),
             events: Arc::new(RwLock::new(Vec::new())),
             subscribers: Arc::new(Mutex::new(Vec::new())),
+            store: None,
         }
+    }
+
+    /// Create an [`AgentManager`] attached to persistent SQLite storage.
+    pub fn new_with_store(store: Arc<RunStore>) -> Self {
+        Self {
+            agents: Arc::new(RwLock::new(HashMap::new())),
+            events: Arc::new(RwLock::new(Vec::new())),
+            subscribers: Arc::new(Mutex::new(Vec::new())),
+            store: Some(store),
+        }
+    }
+
+    /// Attach persistent storage to an existing [`AgentManager`].
+    pub fn with_store(mut self, store: Arc<RunStore>) -> Self {
+        self.store = Some(store);
+        self
+    }
+
+    /// Access attached persistent storage if available.
+    pub fn store(&self) -> Option<&Arc<RunStore>> {
+        self.store.as_ref()
+    }
+
+    /// Load and rehydrate all agents from persistent storage, performing restart recovery.
+    pub fn load_from_store(store: Arc<RunStore>) -> Result<Self> {
+        let records = store.list_agents()?;
+        let manager = Self::new_with_store(Arc::clone(&store));
+
+        for record in records {
+            let manifest = match AgentManifest::from_yaml_str(&record.manifest_yaml) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!("Skipping unparseable agent record '{}': {}", record.id, e);
+                    continue;
+                }
+            };
+
+            let mut state = record
+                .status
+                .parse::<AgentState>()
+                .unwrap_or(AgentState::Stopped);
+            let mut updated_at = record.updated_at.clone();
+
+            // Reconcile interrupted Running agents on restart
+            if state == AgentState::Running {
+                if manifest.auto_resume {
+                    tracing::info!(
+                        "Agent '{}' ({}) configured for auto-resume",
+                        record.name,
+                        record.id
+                    );
+                } else {
+                    state = AgentState::Stopped;
+                    updated_at = Utc::now().to_rfc3339();
+                    let _ = store.update_agent_status(&record.id, "stopped");
+                }
+            }
+
+            let agent = Agent {
+                id: record.id.clone(),
+                name: record.name,
+                role: manifest.role,
+                system_prompt: manifest.system_prompt,
+                state,
+                workspace: manifest.workspace,
+                model: manifest.model,
+                tools: manifest.tools,
+                permissions: manifest.permissions,
+                auto_resume: manifest.auto_resume,
+                created_at: record.created_at,
+                updated_at,
+            };
+
+            if let Ok(mut lock) = manager.agents.write() {
+                lock.insert(record.id, agent);
+            }
+        }
+
+        Ok(manager)
     }
 
     /// Register a new agent worker from a manifest.
@@ -249,22 +374,36 @@ impl AgentManager {
             ));
         }
 
-        let id = manifest.id.unwrap_or_else(AgentId::generate);
+        let id = manifest.id.clone().unwrap_or_else(AgentId::generate);
         let now = Utc::now().to_rfc3339();
 
         let agent = Agent {
             id: id.clone(),
             name: name.to_string(),
             role: role.to_string(),
-            system_prompt: manifest.system_prompt,
+            system_prompt: manifest.system_prompt.clone(),
             state: AgentState::Created,
-            workspace: manifest.workspace,
-            model: manifest.model,
-            tools: manifest.tools,
-            permissions: manifest.permissions,
+            workspace: manifest.workspace.clone(),
+            model: manifest.model.clone(),
+            tools: manifest.tools.clone(),
+            permissions: manifest.permissions.clone(),
+            auto_resume: manifest.auto_resume,
             created_at: now.clone(),
             updated_at: now.clone(),
         };
+
+        if let Some(ref store) = self.store {
+            let yaml = manifest.to_yaml_string().unwrap_or_default();
+            let record = AgentRecord {
+                id: id.clone(),
+                name: name.to_string(),
+                manifest_yaml: yaml,
+                status: AgentState::Created.as_str().to_string(),
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            };
+            store.save_agent(&record)?;
+        }
 
         {
             let mut lock = self
@@ -307,6 +446,10 @@ impl AgentManager {
         agent.state.transition_to(AgentState::Ready)?;
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
+
+        if let Some(ref store) = self.store {
+            let _ = store.update_agent_status(agent_id, "ready");
+        }
 
         self.emit_event(AgentLifecycleEvent::AgentReady {
             agent_id: agent_id.clone(),
@@ -351,6 +494,10 @@ impl AgentManager {
                 let now = Utc::now().to_rfc3339();
                 agent.updated_at = now.clone();
 
+                if let Some(ref store) = self.store {
+                    let _ = store.update_agent_status(agent_id, "running");
+                }
+
                 self.emit_event(AgentLifecycleEvent::AgentStarted {
                     agent_id: agent_id.clone(),
                     timestamp: now,
@@ -388,6 +535,10 @@ impl AgentManager {
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        if let Some(ref store) = self.store {
+            let _ = store.update_agent_status(agent_id, "paused");
+        }
+
         self.emit_event(AgentLifecycleEvent::AgentPaused {
             agent_id: agent_id.clone(),
             timestamp: now,
@@ -421,6 +572,10 @@ impl AgentManager {
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        if let Some(ref store) = self.store {
+            let _ = store.update_agent_status(agent_id, "running");
+        }
+
         self.emit_event(AgentLifecycleEvent::AgentResumed {
             agent_id: agent_id.clone(),
             timestamp: now,
@@ -447,6 +602,10 @@ impl AgentManager {
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        if let Some(ref store) = self.store {
+            let _ = store.update_agent_status(agent_id, "stopped");
+        }
+
         self.emit_event(AgentLifecycleEvent::AgentStopped {
             agent_id: agent_id.clone(),
             reason: None,
@@ -470,6 +629,10 @@ impl AgentManager {
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        if let Some(ref store) = self.store {
+            let _ = store.update_agent_status(agent_id, "ready");
+        }
+
         self.emit_event(AgentLifecycleEvent::AgentReady {
             agent_id: agent_id.clone(),
             timestamp: now,
@@ -492,6 +655,10 @@ impl AgentManager {
         agent.state.transition_to(AgentState::Failed)?;
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
+
+        if let Some(ref store) = self.store {
+            let _ = store.update_agent_status(agent_id, "failed");
+        }
 
         self.emit_event(AgentLifecycleEvent::AgentFailed {
             agent_id: agent_id.clone(),
@@ -539,8 +706,53 @@ impl AgentManager {
             }
         }
 
-        lock.remove(agent_id)
-            .ok_or_else(|| CortexError::NotFound(format!("agent '{}' not found", agent_id)))
+        let removed = lock
+            .remove(agent_id)
+            .ok_or_else(|| CortexError::NotFound(format!("agent '{}' not found", agent_id)))?;
+
+        if let Some(ref store) = self.store {
+            let _ = store.delete_agent(agent_id);
+        }
+
+        Ok(removed)
+    }
+
+    /// Record a persistence execution checkpoint for the given agent.
+    pub fn save_checkpoint(
+        &self,
+        agent_id: &AgentId,
+        step: i64,
+        data_json: Option<String>,
+    ) -> Result<i64> {
+        let agent = self.inspect(agent_id)?;
+        let store = self.store.as_ref().ok_or_else(|| {
+            CortexError::Internal(
+                "cannot save checkpoint: no persistent storage attached".to_string(),
+            )
+        })?;
+
+        let now = Utc::now().to_rfc3339();
+        let checkpoint = AgentCheckpointRecord {
+            id: None,
+            agent_id: agent_id.clone(),
+            step,
+            state: agent.state.as_str().to_string(),
+            data_json,
+            created_at: now,
+        };
+
+        store.save_agent_checkpoint(&checkpoint)
+    }
+
+    /// List recorded execution checkpoints for the given agent.
+    pub fn list_checkpoints(&self, agent_id: &AgentId) -> Result<Vec<AgentCheckpointRecord>> {
+        let store = self.store.as_ref().ok_or_else(|| {
+            CortexError::Internal(
+                "cannot list checkpoints: no persistent storage attached".to_string(),
+            )
+        })?;
+
+        store.list_agent_checkpoints(agent_id)
     }
 
     /// Subscribe to the live stream of agent lifecycle events.
@@ -565,6 +777,39 @@ impl AgentManager {
             .filter(|e| e.agent_id() == agent_id)
             .cloned()
             .collect()
+    }
+
+    /// Reconcile agents left in active or interrupted states after an unhandled process termination or crash.
+    ///
+    /// Transitions all [`AgentState::Running`] agents to [`AgentState::Stopped`], unless configured
+    /// with `auto_resume: true`. Updates persistent storage if attached.
+    pub fn reconcile_crashed_agents(&self) -> Result<usize> {
+        let mut lock = self
+            .agents
+            .write()
+            .map_err(|e| CortexError::Internal(format!("agents lock poisoned: {}", e)))?;
+
+        let mut reconciled = 0;
+        let now = Utc::now().to_rfc3339();
+        let mut auto_resume_ids = Vec::new();
+
+        for agent in lock.values_mut() {
+            if agent.state == AgentState::Running {
+                if agent.auto_resume {
+                    auto_resume_ids.push(agent.id.clone());
+                } else {
+                    agent.state = AgentState::Stopped;
+                    agent.updated_at = now.clone();
+                    reconciled += 1;
+                }
+            }
+        }
+
+        if let Some(ref store) = self.store {
+            let _ = store.reconcile_crashed_agents_in_store(&auto_resume_ids);
+        }
+
+        Ok(reconciled)
     }
 
     fn emit_event(&self, event: AgentLifecycleEvent) {

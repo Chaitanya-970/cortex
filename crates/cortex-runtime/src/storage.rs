@@ -4,15 +4,50 @@
 //! and event stream storage for the Cortex runtime.
 
 use chrono::Utc;
-use cortex_core::{CortexError, EventRecord, Result, RunId};
+use cortex_core::{AgentId, CortexError, EventRecord, Result, RunId};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Mutex;
 
 /// Current schema migration version.
-pub const CURRENT_SCHEMA_VERSION: i32 = 1;
+pub const CURRENT_SCHEMA_VERSION: i32 = 2;
 const SCHEMA_V1: &str = include_str!("../migrations/001_initial_schema.sql");
+const SCHEMA_V2: &str = include_str!("../migrations/002_agents_and_checkpoints.sql");
+
+/// Persistent database record for an agent worker.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentRecord {
+    /// Unique agent identifier.
+    pub id: AgentId,
+    /// Human-readable agent name.
+    pub name: String,
+    /// Declarative YAML manifest content.
+    pub manifest_yaml: String,
+    /// Current lifecycle status string (e.g., "created", "running", "paused", "stopped", "failed").
+    pub status: String,
+    /// Creation timestamp in ISO 8601 UTC.
+    pub created_at: String,
+    /// Last update timestamp in ISO 8601 UTC.
+    pub updated_at: String,
+}
+
+/// Persistent execution checkpoint for an agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentCheckpointRecord {
+    /// Auto-incrementing database ID.
+    pub id: Option<i64>,
+    /// Associated agent ID.
+    pub agent_id: AgentId,
+    /// Execution step or sequence number.
+    pub step: i64,
+    /// Snapshot lifecycle state (e.g., "running", "paused", "stopped").
+    pub state: String,
+    /// Serialized context, memories, or checkpoint payload JSON.
+    pub data_json: Option<String>,
+    /// Checkpoint timestamp in ISO 8601 UTC.
+    pub created_at: String,
+}
 
 /// Summary information for an execution run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -44,6 +79,12 @@ pub struct RunSummary {
 /// SQLite persistence manager for agent execution runs and structured events.
 pub struct RunStore {
     conn: Mutex<Connection>,
+}
+
+impl std::fmt::Debug for RunStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunStore").finish()
+    }
 }
 
 impl RunStore {
@@ -131,6 +172,21 @@ impl RunStore {
             )
             .map_err(|e| {
                 CortexError::Internal(format!("failed to record schema_version 1: {}", e))
+            })?;
+        }
+
+        if current_version < 2 {
+            conn.execute_batch(SCHEMA_V2).map_err(|e| {
+                CortexError::Internal(format!("failed to apply migration 002: {}", e))
+            })?;
+
+            let now = Utc::now().to_rfc3339();
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
+                params![2, now],
+            )
+            .map_err(|e| {
+                CortexError::Internal(format!("failed to record schema_version 2: {}", e))
             })?;
         }
 
@@ -371,6 +427,251 @@ impl RunStore {
         }
 
         Ok(records)
+    }
+
+    /// Save or update an agent record in SQLite.
+    pub fn save_agent(&self, agent: &AgentRecord) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        conn.execute(
+            "INSERT INTO agents (id, name, manifest_yaml, status, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                manifest_yaml = excluded.manifest_yaml,
+                status = excluded.status,
+                updated_at = excluded.updated_at",
+            params![
+                agent.id.as_str(),
+                agent.name,
+                agent.manifest_yaml,
+                agent.status,
+                agent.created_at,
+                agent.updated_at,
+            ],
+        )
+        .map_err(|e| CortexError::Internal(format!("failed to save agent: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Retrieve an agent record by ID.
+    pub fn get_agent(&self, id: &AgentId) -> Result<Option<AgentRecord>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, name, manifest_yaml, status, created_at, updated_at FROM agents WHERE id = ?1")
+            .map_err(|e| CortexError::Internal(format!("failed to prepare get_agent query: {}", e)))?;
+
+        let mut rows = stmt
+            .query(params![id.as_str()])
+            .map_err(|e| CortexError::Internal(format!("failed to query agent: {}", e)))?;
+
+        if let Some(row) = rows
+            .next()
+            .map_err(|e| CortexError::Internal(format!("failed to fetch agent row: {}", e)))?
+        {
+            let raw_id: String = row.get(0).map_err(map_sql_err)?;
+            let name: String = row.get(1).map_err(map_sql_err)?;
+            let manifest_yaml: String = row.get(2).map_err(map_sql_err)?;
+            let status: String = row.get(3).map_err(map_sql_err)?;
+            let created_at: String = row.get(4).map_err(map_sql_err)?;
+            let updated_at: String = row.get(5).map_err(map_sql_err)?;
+
+            Ok(Some(AgentRecord {
+                id: AgentId::from(raw_id),
+                name,
+                manifest_yaml,
+                status,
+                created_at,
+                updated_at,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List all agent records ordered by creation time.
+    pub fn list_agents(&self) -> Result<Vec<AgentRecord>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, name, manifest_yaml, status, created_at, updated_at FROM agents ORDER BY created_at ASC")
+            .map_err(|e| CortexError::Internal(format!("failed to prepare list_agents query: {}", e)))?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let raw_id: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let manifest_yaml: String = row.get(2)?;
+                let status: String = row.get(3)?;
+                let created_at: String = row.get(4)?;
+                let updated_at: String = row.get(5)?;
+
+                Ok(AgentRecord {
+                    id: AgentId::from(raw_id),
+                    name,
+                    manifest_yaml,
+                    status,
+                    created_at,
+                    updated_at,
+                })
+            })
+            .map_err(|e| CortexError::Internal(format!("failed to query agents list: {}", e)))?;
+
+        let mut agents = Vec::new();
+        for agent in rows {
+            agents.push(agent.map_err(map_sql_err)?);
+        }
+
+        Ok(agents)
+    }
+
+    /// Update the lifecycle status of an agent.
+    pub fn update_agent_status(&self, id: &AgentId, status: &str) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let now = Utc::now().to_rfc3339();
+        let rows_affected = conn
+            .execute(
+                "UPDATE agents SET status = ?1, updated_at = ?2 WHERE id = ?3",
+                params![status, now, id.as_str()],
+            )
+            .map_err(|e| CortexError::Internal(format!("failed to update agent status: {}", e)))?;
+
+        if rows_affected == 0 {
+            return Err(CortexError::NotFound(format!("agent '{}' not found", id)));
+        }
+
+        Ok(())
+    }
+
+    /// Delete an agent and its checkpoints by ID.
+    pub fn delete_agent(&self, id: &AgentId) -> Result<bool> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let rows = conn
+            .execute("DELETE FROM agents WHERE id = ?1", params![id.as_str()])
+            .map_err(|e| CortexError::Internal(format!("failed to delete agent: {}", e)))?;
+
+        Ok(rows > 0)
+    }
+
+    /// Record an execution checkpoint for an agent.
+    pub fn save_agent_checkpoint(&self, checkpoint: &AgentCheckpointRecord) -> Result<i64> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        conn.execute(
+            "INSERT INTO agent_checkpoints (agent_id, step, state, data_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                checkpoint.agent_id.as_str(),
+                checkpoint.step,
+                checkpoint.state,
+                checkpoint.data_json,
+                checkpoint.created_at,
+            ],
+        )
+        .map_err(|e| CortexError::Internal(format!("failed to save agent checkpoint: {}", e)))?;
+
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// List all checkpoints recorded for an agent.
+    pub fn list_agent_checkpoints(&self, agent_id: &AgentId) -> Result<Vec<AgentCheckpointRecord>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, agent_id, step, state, data_json, created_at FROM agent_checkpoints WHERE agent_id = ?1 ORDER BY step ASC, id ASC")
+            .map_err(|e| CortexError::Internal(format!("failed to prepare list_agent_checkpoints query: {}", e)))?;
+
+        let rows = stmt
+            .query_map(params![agent_id.as_str()], |row| {
+                let id: i64 = row.get(0)?;
+                let raw_agent_id: String = row.get(1)?;
+                let step: i64 = row.get(2)?;
+                let state: String = row.get(3)?;
+                let data_json: Option<String> = row.get(4)?;
+                let created_at: String = row.get(5)?;
+
+                Ok(AgentCheckpointRecord {
+                    id: Some(id),
+                    agent_id: AgentId::from(raw_agent_id),
+                    step,
+                    state,
+                    data_json,
+                    created_at,
+                })
+            })
+            .map_err(|e| {
+                CortexError::Internal(format!("failed to query agent checkpoints: {}", e))
+            })?;
+
+        let mut checkpoints = Vec::new();
+        for cp in rows {
+            checkpoints.push(cp.map_err(map_sql_err)?);
+        }
+
+        Ok(checkpoints)
+    }
+
+    /// Reconcile agents left in 'running' state after daemon shutdown or crash.
+    ///
+    /// Interrupted agents are cleanly marked as 'stopped', or remain 'running' if their ID
+    /// is included in `auto_resume_ids`.
+    pub fn reconcile_crashed_agents_in_store(&self, auto_resume_ids: &[AgentId]) -> Result<usize> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let now = Utc::now().to_rfc3339();
+        let mut stopped_count = 0;
+
+        let mut stmt = conn
+            .prepare("SELECT id FROM agents WHERE status = 'running'")
+            .map_err(|e| CortexError::Internal(format!("failed to prepare query: {}", e)))?;
+
+        let running_ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| CortexError::Internal(format!("failed to query running agents: {}", e)))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        for id_str in running_ids {
+            let agent_id = AgentId::from(id_str.as_str());
+            if !auto_resume_ids.contains(&agent_id) {
+                conn.execute(
+                    "UPDATE agents SET status = 'stopped', updated_at = ?1 WHERE id = ?2",
+                    params![now, id_str],
+                )
+                .map_err(|e| CortexError::Internal(format!("failed to reconcile agent: {}", e)))?;
+                stopped_count += 1;
+            }
+        }
+
+        Ok(stopped_count)
     }
 }
 

@@ -97,18 +97,41 @@ impl AgentState {
     pub fn is_terminal(&self) -> bool {
         matches!(self, AgentState::Stopped | AgentState::Failed)
     }
+    /// Return lowercase string slice representation of the state.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AgentState::Created => "created",
+            AgentState::Ready => "ready",
+            AgentState::Running => "running",
+            AgentState::Paused => "paused",
+            AgentState::Stopped => "stopped",
+            AgentState::Failed => "failed",
+        }
+    }
+}
+
+impl std::str::FromStr for AgentState {
+    type Err = CortexError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "created" => Ok(AgentState::Created),
+            "ready" => Ok(AgentState::Ready),
+            "running" => Ok(AgentState::Running),
+            "paused" => Ok(AgentState::Paused),
+            "stopped" => Ok(AgentState::Stopped),
+            "failed" => Ok(AgentState::Failed),
+            other => Err(CortexError::Validation(format!(
+                "unknown agent state: '{}'",
+                other
+            ))),
+        }
+    }
 }
 
 impl std::fmt::Display for AgentState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AgentState::Created => write!(f, "created"),
-            AgentState::Ready => write!(f, "ready"),
-            AgentState::Running => write!(f, "running"),
-            AgentState::Paused => write!(f, "paused"),
-            AgentState::Stopped => write!(f, "stopped"),
-            AgentState::Failed => write!(f, "failed"),
-        }
+        write!(f, "{}", self.as_str())
     }
 }
 

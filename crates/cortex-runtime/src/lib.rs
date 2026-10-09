@@ -21,8 +21,9 @@ pub mod workspace;
 
 pub use agent::{
     Agent, AgentContext, AgentLifecycleEvent, AgentLoop, AgentManager, AgentManifest,
-    AgentModelConfig, AgentPermissions, AgentRunResult, AgentState, CancellationToken, ChatMessage,
-    PermissionState, SessionMetadata, TodoItem, CODING_AGENT_POLICY,
+    AgentModelConfig, AgentPermissions, AgentRunResult, AgentState, AgentYamlManifest,
+    AgentYamlModel, AgentYamlPermissions, CancellationToken, ChatMessage, PermissionState,
+    SessionMetadata, TodoItem, YamlPermissionValue, CODING_AGENT_POLICY,
 };
 pub use mcp::{CortexConfig, McpClient, McpConfig, McpManager, McpServerConfig, McpTool};
 pub use model::{
@@ -33,7 +34,7 @@ pub use providers::{
     create_model_provider, estimate_cost, AnthropicProvider, OpenAiCompatibleProvider,
 };
 pub use sandbox::{Sandbox, SandboxMode};
-pub use storage::{RunStore, RunSummary};
+pub use storage::{AgentCheckpointRecord, AgentRecord, RunStore, RunSummary};
 pub use tool::{validate_schema, PermissionLevel, Tool, ToolDefinition, ToolRegistry, ToolResult};
 pub use workspace::Workspace;
 
