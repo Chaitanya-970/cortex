@@ -90,6 +90,38 @@ impl AgentPermissions {
     }
 }
 
+fn default_role() -> String {
+    "Autonomous Worker".to_string()
+}
+
+fn deserialize_model_config<'de, D>(
+    deserializer: D,
+) -> std::result::Result<AgentModelConfig, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Helper {
+        Full(AgentModelConfig),
+        Simple(String),
+    }
+
+    match Helper::deserialize(deserializer)? {
+        Helper::Full(cfg) => Ok(cfg),
+        Helper::Simple(model_name) => {
+            let provider = if model_name.starts_with("claude") {
+                "anthropic"
+            } else if model_name.starts_with("ollama") {
+                "ollama"
+            } else {
+                "openai"
+            };
+            Ok(AgentModelConfig::new(provider, model_name))
+        }
+    }
+}
+
 /// Declarative manifest used to instantiate a new agent worker.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentManifest {
@@ -99,13 +131,15 @@ pub struct AgentManifest {
     /// Human-readable agent worker name.
     pub name: String,
     /// Operational role and task domain (e.g., "Code Reviewer", "Software Engineer").
+    #[serde(default = "default_role")]
     pub role: String,
     /// System prompt or custom operational policy instructions.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "policy", skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
     /// Assigned workspace directory boundary.
     pub workspace: PathBuf,
     /// Model provider and parameter configuration.
+    #[serde(deserialize_with = "deserialize_model_config")]
     pub model: AgentModelConfig,
     /// Allowed tool definitions or names.
     #[serde(default)]
@@ -171,6 +205,12 @@ impl AgentManifest {
             .map_err(|e| CortexError::Validation(format!("invalid toml manifest: {}", e)))
     }
 
+    /// Deserialize an [`AgentManifest`] from a YAML string.
+    pub fn from_yaml_str(yaml_str: &str) -> Result<Self> {
+        serde_yaml::from_str(yaml_str)
+            .map_err(|e| CortexError::Validation(format!("invalid yaml manifest: {}", e)))
+    }
+
     /// Serialize this [`AgentManifest`] to a pretty-printed JSON string.
     pub fn to_json_string(&self) -> Result<String> {
         serde_json::to_string_pretty(self).map_err(|e| {
@@ -183,6 +223,48 @@ impl AgentManifest {
         toml::to_string_pretty(self).map_err(|e| {
             CortexError::Internal(format!("failed to serialize manifest to toml: {}", e))
         })
+    }
+
+    /// Serialize this [`AgentManifest`] to a YAML string.
+    pub fn to_yaml_string(&self) -> Result<String> {
+        serde_yaml::to_string(self).map_err(|e| {
+            CortexError::Internal(format!("failed to serialize manifest to yaml: {}", e))
+        })
+    }
+
+    /// Load and deserialize an [`AgentManifest`] from a file (supports JSON, YAML, and TOML).
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
+        let p = path.as_ref();
+        if !p.is_file() {
+            return Err(CortexError::NotFound(format!(
+                "manifest file '{}' not found",
+                p.display()
+            )));
+        }
+        let content = std::fs::read_to_string(p).map_err(|e| {
+            CortexError::Internal(format!(
+                "failed to read manifest file '{}': {}",
+                p.display(),
+                e
+            ))
+        })?;
+
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+        match ext.to_ascii_lowercase().as_str() {
+            "json" => Self::from_json_str(&content),
+            "toml" => Self::from_toml_str(&content),
+            "yaml" | "yml" => Self::from_yaml_str(&content),
+            _ => {
+                // Try JSON, then YAML, then TOML
+                if let Ok(m) = Self::from_json_str(&content) {
+                    Ok(m)
+                } else if let Ok(m) = Self::from_yaml_str(&content) {
+                    Ok(m)
+                } else {
+                    Self::from_toml_str(&content)
+                }
+            }
+        }
     }
 }
 
@@ -567,6 +649,58 @@ impl AgentManager {
             .collect()
     }
 
+    /// Load registered agents from a persistent JSON file.
+    pub fn load_from_file(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        if !path.exists() {
+            return Ok(());
+        }
+        let content = std::fs::read_to_string(path).map_err(|e| {
+            CortexError::Internal(format!(
+                "failed to read agents file '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+        if content.trim().is_empty() {
+            return Ok(());
+        }
+        let loaded: Vec<Agent> = serde_json::from_str(&content).map_err(|e| {
+            CortexError::Internal(format!(
+                "failed to deserialize agents from '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+        let mut lock = self
+            .agents
+            .write()
+            .map_err(|e| CortexError::Internal(format!("agents lock poisoned: {}", e)))?;
+        for agent in loaded {
+            lock.insert(agent.id.clone(), agent);
+        }
+        Ok(())
+    }
+
+    /// Save all registered agents to a persistent JSON file.
+    pub fn save_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let list = self.list();
+        let json_str = serde_json::to_string_pretty(&list)
+            .map_err(|e| CortexError::Internal(format!("failed to serialize agents: {}", e)))?;
+        std::fs::write(path, json_str).map_err(|e| {
+            CortexError::Internal(format!(
+                "failed to write agents to '{}': {}",
+                path.display(),
+                e
+            ))
+        })?;
+        Ok(())
+    }
+
     fn emit_event(&self, event: AgentLifecycleEvent) {
         if let Ok(mut events) = self.events.write() {
             events.push(event.clone());
@@ -705,5 +839,52 @@ mod tests {
         manager.stop(&agent.id).unwrap();
         assert!(manager.remove(&agent.id).is_ok());
         assert!(manager.inspect(&agent.id).is_err());
+    }
+
+    #[test]
+    fn test_yaml_manifest_parsing() {
+        let yaml = r#"
+name: "reviewer"
+role: "Code Reviewer"
+workspace: "./src"
+policy: "Review code changes"
+model:
+  provider: "anthropic"
+  model: "claude-3-5-sonnet"
+tools:
+  - read_file
+  - git_diff
+"#;
+        let manifest = AgentManifest::from_yaml_str(yaml).unwrap();
+        assert_eq!(manifest.name, "reviewer");
+        assert_eq!(manifest.role, "Code Reviewer");
+        assert_eq!(
+            manifest.system_prompt.as_deref(),
+            Some("Review code changes")
+        );
+        assert_eq!(manifest.model.model, "claude-3-5-sonnet");
+        assert_eq!(manifest.model.provider, "anthropic");
+        assert_eq!(manifest.tools, vec!["read_file", "git_diff"]);
+    }
+
+    #[test]
+    fn test_agent_manager_file_persistence() {
+        let tmp_dir = std::env::temp_dir().join(format!("cortex_mgr_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        let file_path = tmp_dir.join("agents.json");
+
+        let manager1 = AgentManager::new();
+        let manifest = test_manifest("persisted-agent");
+        let agent = manager1.create(manifest).unwrap();
+        manager1.start(&agent.id).unwrap();
+        manager1.save_to_file(&file_path).unwrap();
+
+        let manager2 = AgentManager::new();
+        manager2.load_from_file(&file_path).unwrap();
+        let loaded = manager2.inspect(&agent.id).unwrap();
+        assert_eq!(loaded.name, "persisted-agent");
+        assert_eq!(loaded.state, AgentState::Running);
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }
