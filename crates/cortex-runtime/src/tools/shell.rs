@@ -8,6 +8,9 @@ use serde_json::json;
 use std::process::Command;
 use std::sync::Arc;
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 /// Tool for executing shell commands inside the workspace root.
 pub struct ShellTool {
     workspace: Arc<Workspace>,
@@ -75,6 +78,8 @@ fn execute_shell_command(
     } else {
         let mut c = Command::new("sh");
         c.args(["-c", command_str]);
+        #[cfg(unix)]
+        c.process_group(0);
         c
     };
 
@@ -145,6 +150,13 @@ fn execute_shell_command(
             let pid = child.id();
             let _ = Command::new("taskkill")
                 .args(["/F", "/T", "/PID", &pid.to_string()])
+                .output();
+        }
+        #[cfg(unix)]
+        {
+            let pgid = child.id();
+            let _ = Command::new("kill")
+                .args(["-9", &format!("-{}", pgid)])
                 .output();
         }
         let _ = child.kill();
