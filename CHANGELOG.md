@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Thread-safe `AgentRegistry` catalog backed by `Arc<RwLock<HashMap<AgentId, AgentDescriptor>>>` for peer discovery and capability queries.
 - `AgentDescriptor` public read snapshot and typed `AgentCapability` covering tools, wildcard patterns, model capacity tiers, and domain specializations.
 - Query APIs for role indexing, capability search, operational tags, and active worker filtering.
+- Multi-predicate compound queries with conjunction (`find_by_all_capabilities`) and disjunction (`find_by_any_capability`).
+- Candidate suitability scoring and best-match ranking (`rank_by_capabilities`, `find_best_match`).
+- Active worker capability discovery (`find_active_by_capability`, `find_active_by_all_capabilities`).
 - Automated lifecycle synchronization between `AgentManager` and `AgentRegistry` across creation, state transitions, and worker removal.
 
 ### Multi-Agent Coordination & Message Bus
