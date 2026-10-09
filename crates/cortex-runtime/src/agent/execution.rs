@@ -418,7 +418,15 @@ impl AgentLoop {
                 }
                 Ok(())
             };
-            let output = match model.stream(context, &mut on_token) {
+            let output = match model.stream(context, &mut on_token).and_then(|output| {
+                if self.cancellation_token.is_cancelled() {
+                    Err(CortexError::Cancelled(
+                        "agent execution cancelled by request".to_string(),
+                    ))
+                } else {
+                    Ok(output)
+                }
+            }) {
                 Ok(out) => out,
                 Err(CortexError::Cancelled(reason)) => {
                     let duration_ms = start_time.elapsed().as_millis() as u64;

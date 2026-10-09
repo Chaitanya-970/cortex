@@ -317,6 +317,11 @@ impl ToolRegistry {
         input: &serde_json::Value,
         cancellation_token: Option<&CancellationToken>,
     ) -> Result<ToolResult> {
+        if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
+            return Err(CortexError::Cancelled(
+                "tool execution cancelled by request".to_string(),
+            ));
+        }
         let tool = self
             .get(name)
             .ok_or_else(|| CortexError::NotFound(format!("tool '{}' not found", name)))?;

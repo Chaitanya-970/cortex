@@ -38,3 +38,15 @@
 Prompt instructions are not a security boundary.
 
 Security must be enforced by the runtime.
+
+## Cancellation cleanup
+
+Cancelling a built-in model request drops pending HTTP I/O. Cancelling shell
+execution terminates its Unix process group or Windows job and reaps the direct
+child. Output readers do not block the caller's cancellation indefinitely.
+Already-cancelled tool dispatch is rejected before execution. Cancellation does
+not grant capabilities or replace workspace and permission validation.
+
+Process groups and job objects support cleanup; they are not containment against
+malicious descendants that escape a group or spawn during Windows job attachment.
+Container isolation remains a separate security boundary.

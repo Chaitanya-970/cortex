@@ -2,6 +2,7 @@
 
 pub mod anthropic;
 pub mod openai;
+mod transport;
 
 pub use anthropic::AnthropicProvider;
 pub use openai::OpenAiCompatibleProvider;

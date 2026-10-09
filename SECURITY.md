@@ -76,6 +76,7 @@ Every component that touches I/O, process execution, or file paths must include 
 - Shell injection and escaping vulnerabilities
 - Network isolation enforcement
 - Timeout and cancellation enforcement
+- Cancellation during stalled model HTTP requests and descendant-held shell output pipes
 - Capability permission bypass prevention
 - Environment variable leak prevention
 - Malformed tool arguments and schema fuzzing

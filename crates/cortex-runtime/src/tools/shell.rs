@@ -66,6 +66,11 @@ fn execute_shell_command(
     input: &serde_json::Value,
     cancellation_token: Option<&CancellationToken>,
 ) -> Result<ToolResult> {
+    if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
+        return Err(CortexError::Cancelled(
+            "shell execution cancelled by request".to_string(),
+        ));
+    }
     let command_str = input["command"].as_str().ok_or_else(|| {
         CortexError::Validation("missing required 'command' parameter".to_string())
     })?;
@@ -101,6 +106,9 @@ fn execute_shell_command(
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::piped());
 
+    #[cfg(windows)]
+    let process_tree = super::process_tree::ProcessTree::new()?;
+
     let mut child = cmd.spawn().map_err(|e| {
         CortexError::Internal(format!(
             "failed to execute command '{}': {}",
@@ -108,85 +116,106 @@ fn execute_shell_command(
         ))
     })?;
 
-    let mut stdout_pipe = child.stdout.take();
-    let mut stderr_pipe = child.stderr.take();
+    #[cfg(windows)]
+    if let Err(error) = process_tree.attach(&child) {
+        child
+            .kill()
+            .map_err(|e| CortexError::Internal(format!("failed to kill unconfined shell: {e}")))?;
+        child
+            .wait()
+            .map_err(|e| CortexError::Internal(format!("failed to reap unconfined shell: {e}")))?;
+        return Err(error);
+    }
 
-    let stdout_handle = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut s) = stdout_pipe.take() {
-            let _ = std::io::Read::read_to_end(&mut s, &mut buf);
-        }
-        buf
-    });
+    let stdout_pipe = child.stdout.take().expect("piped stdout");
+    let stderr_pipe = child.stderr.take().expect("piped stderr");
+    let (output_tx, output_rx) = std::sync::mpsc::channel();
+    for (is_stderr, mut pipe) in [
+        (
+            false,
+            Box::new(stdout_pipe) as Box<dyn std::io::Read + Send>,
+        ),
+        (true, Box::new(stderr_pipe) as Box<dyn std::io::Read + Send>),
+    ] {
+        let tx = output_tx.clone();
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result = pipe.read_to_end(&mut bytes).map(|_| bytes);
+            // Receiver closure means the owning shell invocation has ended.
+            let _ = tx.send((is_stderr, result));
+        });
+    }
+    drop(output_tx);
 
-    let stderr_handle = std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        if let Some(mut s) = stderr_pipe.take() {
-            let _ = std::io::Read::read_to_end(&mut s, &mut buf);
-        }
-        buf
-    });
-
+    let mut stdout_bytes = None;
+    let mut stderr_bytes = None;
+    let mut status = None;
     let mut cancelled = false;
-    let status = loop {
-        if let Some(token) = cancellation_token {
-            if token.is_cancelled() {
-                cancelled = true;
-                break None;
-            }
+    loop {
+        if cancellation_token.is_some_and(CancellationToken::is_cancelled) {
+            cancelled = true;
+            break;
         }
-        match child.try_wait() {
-            Ok(Some(st)) => break Some(st),
-            Ok(None) => {
+        if status.is_none() {
+            status = child.try_wait().map_err(|e| {
+                CortexError::Internal(format!("failed waiting for child process: {e}"))
+            })?;
+        }
+        if status.is_some() && stdout_bytes.is_some() && stderr_bytes.is_some() {
+            break;
+        }
+        match output_rx.recv_timeout(std::time::Duration::from_millis(25)) {
+            Ok((is_stderr, output)) => {
+                let bytes = output.map_err(|e| {
+                    CortexError::Internal(format!("failed reading shell output: {e}"))
+                })?;
+                if is_stderr {
+                    stderr_bytes = Some(bytes);
+                } else {
+                    stdout_bytes = Some(bytes);
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                if stdout_bytes.is_none() || stderr_bytes.is_none() {
+                    return Err(CortexError::Internal(
+                        "shell output worker disconnected".to_string(),
+                    ));
+                }
                 std::thread::sleep(std::time::Duration::from_millis(25));
             }
-            Err(e) => {
-                return Err(CortexError::Internal(format!(
-                    "failed waiting for child process: {}",
-                    e
-                )));
-            }
         }
-    };
+    }
 
     if cancelled {
-        #[cfg(target_os = "windows")]
-        {
-            let pid = child.id();
-            let _ = Command::new("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .output();
-        }
+        #[cfg(windows)]
+        process_tree.terminate()?;
         #[cfg(unix)]
         {
+            // The process group survives a direct shell's exit while descendants
+            // retain inherited output pipes.
             let pgid = child.id() as i32;
-            unsafe {
-                let _ = kill(-pgid, 9);
-                let _ = kill(pgid, 9);
+            if unsafe { kill(-pgid, 9) } != 0 {
+                let error = std::io::Error::last_os_error();
+                // ESRCH means every group member has already exited.
+                if error.raw_os_error() != Some(3) {
+                    return Err(CortexError::Internal(format!(
+                        "failed to kill shell process group: {error}"
+                    )));
+                }
             }
-            let _ = Command::new("sh")
-                .args(["-c", &format!("kill -9 -{} 2>/dev/null || true", pgid)])
-                .output();
         }
-        let _ = child.kill();
-        let _ = child.wait();
-        let _ = stdout_handle.join();
-        let _ = stderr_handle.join();
+        child
+            .wait()
+            .map_err(|e| CortexError::Internal(format!("failed to reap cancelled shell: {e}")))?;
         return Err(CortexError::Cancelled(format!(
-            "command '{}' cancelled by request",
-            command_str
+            "command '{command_str}' cancelled by request"
         )));
     }
 
-    let status = match status {
-        Some(st) => st,
-        None => child.wait().map_err(|e| {
-            CortexError::Internal(format!("failed waiting for child process exit: {}", e))
-        })?,
-    };
-
-    let stdout_bytes = stdout_handle.join().unwrap_or_default();
-    let stderr_bytes = stderr_handle.join().unwrap_or_default();
+    let status = status.expect("child exit observed");
+    let stdout_bytes = stdout_bytes.expect("stdout completed");
+    let stderr_bytes = stderr_bytes.expect("stderr completed");
 
     let stdout = String::from_utf8_lossy(&stdout_bytes);
     let stderr = String::from_utf8_lossy(&stderr_bytes);
