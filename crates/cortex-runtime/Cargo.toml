@@ -19,4 +19,5 @@ rusqlite = { workspace = true }
 chrono = { workspace = true }
 ureq = { workspace = true }
 toml = { workspace = true }
+serde_yaml = { workspace = true }
 

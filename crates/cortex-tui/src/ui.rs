@@ -1927,6 +1927,14 @@ fn event_type_to_style(event_type: &str) -> Style {
 
 fn event_preview(event: &ExecutionEvent) -> String {
     match event {
+        ExecutionEvent::InterAgentMessage {
+            sender,
+            recipient,
+            routing_key,
+            ..
+        } => {
+            format!("{} -> {} ({})", sender, recipient, routing_key)
+        }
         ExecutionEvent::RunStarted { task, .. } => format!("Task: {}", task),
         ExecutionEvent::ModelRequest { prompt_preview, .. } => {
             format!("Prompt: {}", prompt_preview)
