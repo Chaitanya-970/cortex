@@ -17,6 +17,7 @@ pub mod sandbox;
 pub mod storage;
 pub mod tool;
 pub mod tools;
+pub mod workflow;
 pub mod workspace;
 
 pub use agent::{
@@ -36,6 +37,9 @@ pub use providers::{
 pub use sandbox::{Sandbox, SandboxMode};
 pub use storage::{RunStore, RunSummary};
 pub use tool::{validate_schema, PermissionLevel, Tool, ToolDefinition, ToolRegistry, ToolResult};
+pub use workflow::{
+    WorkflowAgentRef, WorkflowManifest, WorkflowManifestExt, WorkflowStage, WorkflowYamlParser,
+};
 pub use workspace::Workspace;
 
 /// Current semantic version of the Cortex runtime crate.

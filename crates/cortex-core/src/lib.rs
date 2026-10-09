@@ -14,12 +14,14 @@ pub mod event;
 pub mod id;
 pub mod redact;
 pub mod settings;
+pub mod workflow;
 
 pub use error::{CortexError, Result};
 pub use event::{EventRecord, ExecutionEvent};
-pub use id::{AgentId, RunId, SessionId};
+pub use id::{AgentId, RunId, SessionId, WorkflowId};
 pub use redact::Redactor;
 pub use settings::UserSettings;
+pub use workflow::{WorkflowAgentRef, WorkflowManifest, WorkflowStage};
 
 /// Current semantic version of the Cortex core library.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

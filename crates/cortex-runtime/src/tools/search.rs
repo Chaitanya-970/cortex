@@ -145,7 +145,7 @@ impl Tool for GrepTool {
                     .strip_prefix(self.workspace.root())
                     .unwrap_or(&file)
                     .to_string_lossy()
-                    .to_string();
+                    .replace('\\', "/");
 
                 for (idx, line) in content.lines().enumerate() {
                     let matched = if case_sensitive {
@@ -264,7 +264,7 @@ impl Tool for GlobTool {
                 .strip_prefix(self.workspace.root())
                 .unwrap_or(&file)
                 .to_string_lossy()
-                .to_string();
+                .replace('\\', "/");
 
             if matches_glob(pattern, &rel) {
                 matched.push(rel);
@@ -365,7 +365,7 @@ impl Tool for FindTool {
                     .strip_prefix(root)
                     .unwrap_or(&path)
                     .to_string_lossy()
-                    .to_string();
+                    .replace('\\', "/");
 
                 if name_matches {
                     match kind {
@@ -492,7 +492,7 @@ impl Tool for SearchCodeTool {
                     .strip_prefix(self.workspace.root())
                     .unwrap_or(&file)
                     .to_string_lossy()
-                    .to_string();
+                    .replace('\\', "/");
 
                 for (idx, line) in lines.iter().enumerate() {
                     if line.contains(query) {
