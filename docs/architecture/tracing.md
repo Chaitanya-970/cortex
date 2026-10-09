@@ -65,7 +65,7 @@ Appends individual structured lifecycle events with monotonic sequencing:
 
 ## Event Lifecycle Variants
 
-Cortex defines 11 structured execution events in `crates/cortex-core/src/event.rs`:
+Cortex defines 12 structured execution events in `crates/cortex-core/src/event.rs`:
 
 1. `RunStarted`: Emitted when an agent context is initialized with its assigned task.
 2. `ModelRequest`: Emitted before dispatching context to the model provider.
@@ -78,6 +78,16 @@ Cortex defines 11 structured execution events in `crates/cortex-core/src/event.r
 9. `AgentError`: Emitted upon unrecoverable runtime errors.
 10. `RunCompleted`: Emitted when the agent finishes normally.
 11. `RunCancelled`: Emitted when cancellation is triggered via `CancellationToken`.
+12. `InterAgentMessage`: Emitted when a typed inter-agent message is accepted into its recipient's inbox.
+
+### Inter-Agent Message Tracing
+
+Inter-agent communication emits `ExecutionEvent::InterAgentMessage` records:
+
+- **Enqueue Confirmation**: `InterAgentMessage` records that a typed message was accepted into a recipient's inbox; it does *not* confirm execution, tool processing, or task completion by the receiving agent.
+- **Host-Driven Persistence**: `AgentManager` buffers events in an in-memory queue and does *not* automatically persist message traces to SQLite. Trusted host code drains them via `manager.drain_message_events()`, packages each event into an `EventRecord` using the run's monotonic sequence allocator, and writes them to `RunStore`.
+- **Redaction**: Message routing keys and serialized payload JSON pass through `Redactor` prior to buffering, scrubbing recognized API keys and credentials while preserving payload structure. Original payloads in the recipient inbox remain unredacted for execution integrity.
+- **Trace Backpressure**: The in-memory coordination event buffer holds up to 4096 events. If the buffer is full, subsequent `endpoint.send(...)` calls return `CortexError::Validation` until the host drains it, preventing silent trace loss or unrecorded messages.
 
 ## Secret Redaction
 

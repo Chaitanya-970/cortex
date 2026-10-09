@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Double `Ctrl+C` force-quit support in interactive TUI chat: a second keystroke while cancellation is pending immediately exits the application.
 - Workspace `BackgroundIndexer` cancellation and graceful shutdown during application teardown.
 
+### Multi-Agent Coordination & Message Bus
+
+#### Added
+- Strongly typed inter-agent messaging schema (`AgentMessage`, `RoutingKey`, `AgentMessagePayload`) supporting structured task delegation, results, failures, and notifications.
+- Bounded agent inboxes and authenticated communication endpoints (`AgentEndpoint`, `connect_agent`) with backpressure and exact ASCII routing-key matching.
+- Supervisor/worker hierarchy management (`assign_worker`, `workers`) enforcing directed acyclic delegation trees, per-run unique task correlation, and single-completion invariants.
+- Lifecycle revocation on stop, failure, restart, prepare, endpoint drop, and removal; pause wakes receivers while preserving their inboxes.
+- Structured execution event tracing (`InterAgentMessage`) with in-memory backpressure (4096 events) and secret redaction, integrating cleanly into `RunStore`.
+
 ### AgentManager & Agent Lifecycle State Machine
 
 #### Added

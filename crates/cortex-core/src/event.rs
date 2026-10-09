@@ -1,6 +1,6 @@
 //! Structured execution events and event record schemas.
 
-use crate::id::RunId;
+use crate::id::{AgentId, RunId};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +8,23 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum ExecutionEvent {
+    /// A typed inter-agent message was accepted into its recipient's inbox.
+    InterAgentMessage {
+        /// Correlated run identifier.
+        run_id: RunId,
+        /// Runtime-stamped message identifier.
+        message_id: String,
+        /// Authenticated sending agent.
+        sender: AgentId,
+        /// Explicitly addressed recipient.
+        recipient: AgentId,
+        /// Redacted exact routing key.
+        routing_key: String,
+        /// UTC enqueue timestamp.
+        timestamp: String,
+        /// Redacted typed payload. Traces do not carry execution authority.
+        payload: serde_json::Value,
+    },
     /// A new agent run has started.
     RunStarted {
         /// Identifier of the run.
@@ -120,6 +137,7 @@ impl ExecutionEvent {
     /// Return the string identifier representing the event variant name.
     pub fn event_type(&self) -> &'static str {
         match self {
+            Self::InterAgentMessage { .. } => "InterAgentMessage",
             Self::RunStarted { .. } => "RunStarted",
             Self::ModelRequest { .. } => "ModelRequest",
             Self::ModelResponse { .. } => "ModelResponse",
@@ -137,6 +155,7 @@ impl ExecutionEvent {
     /// Access the [`RunId`] associated with this event.
     pub fn run_id(&self) -> &RunId {
         match self {
+            Self::InterAgentMessage { run_id, .. } => run_id,
             Self::RunStarted { run_id, .. }
             | Self::ModelRequest { run_id, .. }
             | Self::ModelResponse { run_id, .. }

@@ -1,7 +1,7 @@
 [package]
 name = "cortex-cli"
-description = "Command-line interface and entrypoint for the Cortex agent runtime"
 default-run = "cortex"
+description = "Command-line interface and entrypoint for the Cortex agent runtime"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

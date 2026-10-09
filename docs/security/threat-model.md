@@ -50,3 +50,13 @@ not grant capabilities or replace workspace and permission validation.
 Process groups and job objects support cleanup; they are not containment against
 malicious descendants that escape a group or spawn during Windows job attachment.
 Container isolation remains a separate security boundary.
+
+## Inter-Agent Boundaries
+
+- `AgentManager` and endpoint issuance are restricted to trusted host code.
+- Sender identity is bound to the issued `AgentEndpoint`; agents cannot forge senders.
+- Model text does not grant supervisor roles, assign workers, or expand permissions.
+- Delegating tasks cannot copy, elevate, or transfer capabilities to workers.
+- Receiving a message returns typed data; receipt does not execute tools.
+- Deserialized message envelopes carry no authentication or capability authority.
+- In-process coordination does not defend against malicious host code with manager access.
