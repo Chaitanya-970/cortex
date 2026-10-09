@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Benchmark Harness & Platform Compatibility
+
+#### Fixed
+- Fixed hardcoded Unix `sh` invocation and POSIX commands in `BenchmarkRunner`, adding cross-platform shell dispatch (`cmd.exe /C` on Windows, `sh -c` on Unix).
+- Added dynamic Python interpreter detection (`detect_python`) probing `python3`, `python`, and `py`.
+- Normalized benchmark task verification commands for Windows platforms to resolve task execution failures in `cortex bench run` and CLI tests.
+
 ### Multi-Agent Coordination & Message Bus
 
 #### Added

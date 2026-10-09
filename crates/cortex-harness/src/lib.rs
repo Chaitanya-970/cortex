@@ -14,7 +14,7 @@ pub mod suite;
 pub mod task;
 
 pub use metrics::BenchmarkMetrics;
-pub use runner::BenchmarkRunner;
+pub use runner::{detect_python, prepare_verification_command, BenchmarkRunner};
 pub use suite::{available_suites, get_suite_tasks, BenchmarkBaselineProvider};
 pub use task::{BenchmarkTask, TaskFile, TaskOutcome};
 
@@ -134,5 +134,27 @@ mod tests {
         assert_eq!(metrics.successful_tasks, 5);
         assert!((metrics.success_rate - 1.0).abs() < 1e-6);
         assert_eq!(metrics.tool_error_count, 0);
+    }
+
+    #[test]
+    fn test_platform_command_preparation_and_python_detection() {
+        let py = detect_python();
+        assert!(!py.is_empty());
+
+        let cmd = prepare_verification_command("python3 test_sample.py");
+        if cfg!(target_os = "windows") {
+            assert!(cmd.starts_with(py));
+        } else {
+            assert_eq!(cmd, "python3 test_sample.py");
+        }
+
+        let posix_cmd = "rustc --test src/calc.rs -o /tmp/calc_test && /tmp/calc_test";
+        let prepared_posix = prepare_verification_command(posix_cmd);
+        if cfg!(target_os = "windows") {
+            assert!(!prepared_posix.contains("/tmp/"));
+            assert!(prepared_posix.contains("calc_test.exe"));
+        } else {
+            assert_eq!(prepared_posix, posix_cmd);
+        }
     }
 }

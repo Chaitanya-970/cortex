@@ -116,6 +116,13 @@ pub fn available_suites() -> Vec<&'static str> {
 }
 
 fn coding_benchmark_suite() -> Vec<BenchmarkTask> {
+    let py = crate::runner::detect_python();
+    let rust_calc_verify = if cfg!(target_os = "windows") {
+        "rustc --test src/calc.rs -o calc_test.exe && calc_test.exe"
+    } else {
+        "rustc --test src/calc.rs -o ./calc_test && ./calc_test"
+    };
+
     vec![
         // Task 1: Rust Syntax Repair
         BenchmarkTask::new(
@@ -138,7 +145,7 @@ fn coding_benchmark_suite() -> Vec<BenchmarkTask> {
             "coding",
             "Fix off-by-one boundary bug in binary search implementation",
             "Fix the boundary condition in binary_search in search.py to pass test_search.py.",
-            "python3 test_search.py",
+            format!("{py} test_search.py"),
         )
         .with_file(
             "search.py",
@@ -156,7 +163,7 @@ fn coding_benchmark_suite() -> Vec<BenchmarkTask> {
             "coding",
             "Correct arithmetic inversion in calculation helper",
             "Fix the logic bug in src/calc.rs so test suite passes.",
-            "rustc --test src/calc.rs -o /tmp/calc_test && /tmp/calc_test",
+            rust_calc_verify,
         )
         .with_file(
             "src/calc.rs",
@@ -170,7 +177,7 @@ fn coding_benchmark_suite() -> Vec<BenchmarkTask> {
             "coding",
             "Add missing standard library import in geometry helper",
             "Fix the undefined name error in geometry.py so test_geometry.py passes.",
-            "python3 test_geometry.py",
+            format!("{py} test_geometry.py"),
         )
         .with_file(
             "geometry.py",
@@ -188,7 +195,7 @@ fn coding_benchmark_suite() -> Vec<BenchmarkTask> {
             "coding",
             "Safely handle optional dictionary key in event parser",
             "Fix the KeyError exception when parsing payload without 'meta' in parser.py.",
-            "python3 test_parser.py",
+            format!("{py} test_parser.py"),
         )
         .with_file(
             "parser.py",
@@ -202,6 +209,7 @@ fn coding_benchmark_suite() -> Vec<BenchmarkTask> {
 }
 
 fn refactor_benchmark_suite() -> Vec<BenchmarkTask> {
+    let py = crate::runner::detect_python();
     vec![
         // Multi-step refactoring task 1: Extract helper
         BenchmarkTask::new(
@@ -210,7 +218,7 @@ fn refactor_benchmark_suite() -> Vec<BenchmarkTask> {
             "refactor",
             "Extract duplicated email validation regex into dedicated helper module",
             "Refactor auth.py to use validate_email from validator.py.",
-            "python3 test_auth.py",
+            format!("{py} test_auth.py"),
         )
         .with_file(
             "auth.py",
@@ -224,6 +232,7 @@ fn refactor_benchmark_suite() -> Vec<BenchmarkTask> {
 }
 
 fn cli_benchmark_suite() -> Vec<BenchmarkTask> {
+    let py = crate::runner::detect_python();
     vec![
         // CLI Benchmark task 1: Flag parsing
         BenchmarkTask::new(
@@ -232,7 +241,7 @@ fn cli_benchmark_suite() -> Vec<BenchmarkTask> {
             "cli",
             "Support --verbose flag in argument processor",
             "Update cli.py to parse --verbose flag correctly.",
-            "python3 test_cli.py",
+            format!("{py} test_cli.py"),
         )
         .with_file(
             "cli.py",

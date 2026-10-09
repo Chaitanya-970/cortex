@@ -92,10 +92,17 @@ impl BenchmarkRunner {
         let (success, step_count, error_message) = match agent_result {
             Ok(run_res) => {
                 // Execute verification command
-                let output = Command::new("sh")
-                    .args(["-c", &task.verification_command])
-                    .current_dir(&tmp_dir)
-                    .output();
+                let prepared_cmd = prepare_verification_command(&task.verification_command);
+                let mut cmd = if cfg!(target_os = "windows") {
+                    let mut c = Command::new("cmd");
+                    c.args(["/C", &prepared_cmd]);
+                    c
+                } else {
+                    let mut c = Command::new("sh");
+                    c.args(["-c", &prepared_cmd]);
+                    c
+                };
+                let output = cmd.current_dir(&tmp_dir).output();
 
                 match output {
                     Ok(out) => {
@@ -174,4 +181,57 @@ fn create_standard_registry(workspace: &Arc<Workspace>) -> Result<ToolRegistry> 
     registry.register_tool(GitBranchTool::new(Arc::clone(workspace)))?;
     registry.register_tool(GitCommitTool::new(Arc::clone(workspace)))?;
     Ok(registry)
+}
+
+/// Detect the available Python executable name on the host system.
+///
+/// Probes `python3`, `python`, and `py` in order, returning the first candidate
+/// that successfully responds to `--version`.
+pub fn detect_python() -> &'static str {
+    static PYTHON: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    PYTHON.get_or_init(|| {
+        let candidates = if cfg!(target_os = "windows") {
+            &["python", "python3", "py"][..]
+        } else {
+            &["python3", "python"][..]
+        };
+
+        for &candidate in candidates {
+            if let Ok(output) = Command::new(candidate).arg("--version").output() {
+                if output.status.success() {
+                    return candidate;
+                }
+            }
+        }
+
+        if cfg!(target_os = "windows") {
+            "python"
+        } else {
+            "python3"
+        }
+    })
+}
+
+/// Prepare a verification command for execution on the host operating system.
+///
+/// On Windows:
+/// - Adapts `python3` invocations to the detected Python binary (`python` or `py`).
+/// - Replaces POSIX `/tmp/calc_test` references with `calc_test.exe`.
+pub fn prepare_verification_command(command: &str) -> String {
+    let mut cmd = command.to_string();
+    if cfg!(target_os = "windows") {
+        let py = detect_python();
+        if py != "python3" {
+            if cmd.starts_with("python3 ") {
+                cmd = format!("{} {}", py, &cmd["python3 ".len()..]);
+            } else if cmd == "python3" {
+                cmd = py.to_string();
+            }
+        }
+
+        if cmd.contains("/tmp/calc_test") {
+            cmd = cmd.replace("/tmp/calc_test", "calc_test.exe");
+        }
+    }
+    cmd
 }
