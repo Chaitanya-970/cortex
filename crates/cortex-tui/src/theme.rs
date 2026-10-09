@@ -1,4 +1,4 @@
-//! Gemini CLI / Claude Code TUI Design System theme implementation.
+//! Codex CLI & Claude Code TUI Design System theme implementation.
 //!
 //! Conforms strictly to the visual specifications defined in `DESIGN.md`.
 
@@ -8,95 +8,106 @@ use ratatui::symbols::border::Set as BorderSet;
 /// Visual theme mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThemeMode {
-    /// Gemini CLI theme: signature Gemini Electric Blue (#4285f4), Sparkle Violet (#a855f7), Sky Cyan (#38bdf8), ✦ sparkle star.
+    /// Codex CLI & Claude Code theme: Terracotta (#d77757), Hot Pink (#fd5db1), Lavender (#b1b9f9).
     #[default]
+    Codex,
+    /// Gemini CLI theme: Electric Blue (#4285f4), Sparkle Violet (#a855f7), Sky Cyan (#38bdf8), ✦ sparkle star.
     Gemini,
-    /// Claude Code theme: Terracotta (#d77757), Hot Pink (#fd5db1), Lavender (#b1b9f9).
-    Claude,
 }
 
 // =========================================================================
-// Gemini CLI Theme Color Palette
+// Codex CLI & Claude Code Theme Color Palette (DESIGN.md)
 // =========================================================================
 
-/// Terminal dark background (`#10141d` - Deep Gemini Midnight Navy).
-pub const COLOR_BG: Color = Color::Rgb(16, 20, 29);
+/// Terminal dark background (`#1a1a1a`).
+pub const COLOR_BG: Color = Color::Rgb(26, 26, 26);
 
 /// Default foreground / pure white AI responses (`#ffffff`).
 pub const COLOR_FG: Color = Color::Rgb(255, 255, 255);
 
-/// Primary Gemini Electric Blue brand accent (`#4285f4`).
-pub const COLOR_PRIMARY: Color = Color::Rgb(66, 133, 244);
+/// Primary terracotta brand accent (`#d77757`).
+pub const COLOR_PRIMARY: Color = Color::Rgb(215, 119, 87);
 
-/// Gemini Sparkle Violet secondary accent (`#a855f7`).
-pub const COLOR_SECONDARY: Color = Color::Rgb(168, 85, 247);
+/// Hot pink bash & tool execution border (`#fd5db1`).
+pub const COLOR_SECONDARY: Color = Color::Rgb(253, 93, 177);
 
-/// Gemini Sky Cyan tool and path accent (`#38bdf8`).
-pub const COLOR_ACCENT: Color = Color::Rgb(56, 189, 248);
+/// Lavender-blue permission dialogs and accents (`#b1b9f9`).
+pub const COLOR_ACCENT: Color = Color::Rgb(177, 185, 249);
 
-/// Soft Gemini Blue for shimmer gradient (`#8ab4f8`).
-pub const COLOR_GEMINI_SHIMMER: Color = Color::Rgb(138, 180, 248);
+/// Lighter terracotta for shimmer animation (`#eb9f7f`).
+pub const COLOR_CLAUDE_SHIMMER: Color = Color::Rgb(235, 159, 127);
 
-/// Claude shimmer compatibility alias (`#8ab4f8`).
-pub const COLOR_CLAUDE_SHIMMER: Color = COLOR_GEMINI_SHIMMER;
+/// Compatibility alias for Gemini shimmer.
+pub const COLOR_GEMINI_SHIMMER: Color = COLOR_CLAUDE_SHIMMER;
 
-/// Background fill for tool output (`#18202f`).
-pub const COLOR_TOOL_BG: Color = Color::Rgb(24, 32, 47);
+/// Background fill for tool & bash output (`rgb(65, 60, 65)`).
+pub const COLOR_TOOL_BG: Color = Color::Rgb(65, 60, 65);
 
-/// Gemini Light Violet permission dialogs and accents (`#c084fc`).
-pub const COLOR_LAVENDER: Color = Color::Rgb(192, 132, 252);
+/// Lavender-blue permission dialogs and accents (`#b1b9f9`).
+pub const COLOR_LAVENDER: Color = Color::Rgb(177, 185, 249);
 
 /// Purple auto-accept / YOLO mode (`#af87ff`).
 pub const COLOR_AUTO_ACCEPT: Color = Color::Rgb(175, 135, 255);
 
-/// Google Green completion / success indicator (`#34a853`).
-pub const COLOR_SUCCESS: Color = Color::Rgb(52, 168, 83);
+/// Green completion / success indicator (`#4eba65`).
+pub const COLOR_SUCCESS: Color = Color::Rgb(78, 186, 101);
 
-/// Google Amber warning and caution (`#fbbc04`).
-pub const COLOR_WARNING: Color = Color::Rgb(251, 188, 4);
+/// Amber / gold warning and caution (`#ffc107`).
+pub const COLOR_WARNING: Color = Color::Rgb(255, 193, 7);
 
-/// Google Coral Red errors (`#ea4335`).
-pub const COLOR_ERROR: Color = Color::Rgb(234, 67, 53);
+/// Soft red-pink errors (`#ff6b80`).
+pub const COLOR_ERROR: Color = Color::Rgb(255, 107, 128);
 
-/// Slate gray for inactive elements and metadata (`#94a3b8`).
-pub const COLOR_MUTED: Color = Color::Rgb(148, 163, 184);
+/// Muted gray for inactive elements and input borders (`#888888`).
+pub const COLOR_MUTED: Color = Color::Rgb(136, 136, 136);
 
-/// Light slate for shimmering input borders (`#cbd5e1`).
-pub const COLOR_MUTED_SHIMMER: Color = Color::Rgb(203, 213, 225);
+/// Light gray for shimmering input borders (`#a6a6a6`).
+pub const COLOR_MUTED_SHIMMER: Color = Color::Rgb(166, 166, 166);
 
-/// Deep slate for subtle dividers (`#334155`).
-pub const COLOR_SUBTLE: Color = Color::Rgb(51, 65, 85);
+/// Dark gray for subtle dividers (`#505050`).
+pub const COLOR_SUBTLE: Color = Color::Rgb(80, 80, 80);
 
-/// Surface background for user message cards (`#1e293b`).
-pub const COLOR_SURFACE: Color = Color::Rgb(30, 41, 59);
+/// Surface background for user message cards (`#373737`).
+pub const COLOR_SURFACE: Color = Color::Rgb(55, 55, 55);
 
-/// Diff added line background tint (`#14532d`).
-pub const COLOR_DIFF_ADDED_BG: Color = Color::Rgb(20, 83, 45);
+/// Diff added line background tint (`#225c2b`).
+pub const COLOR_DIFF_ADDED_BG: Color = Color::Rgb(34, 92, 43);
 
-/// Diff removed line background tint (`#7f1d1d`).
-pub const COLOR_DIFF_REMOVED_BG: Color = Color::Rgb(127, 29, 29);
+/// Diff removed line background tint (`#7a2936`).
+pub const COLOR_DIFF_REMOVED_BG: Color = Color::Rgb(122, 41, 54);
 
-/// Gemini signature 4-point sparkle star spinner frames:
-/// `✦ → ✧ → ⟡ → ❖ → ⟡ → ✧ → ✦ ...`
-pub const SPINNER_FRAMES: &[&str] = &["✦", "✧", "⟡", "❖", "⟡", "✧"];
+/// Reverse-mirror thinking spinner symbols per DESIGN.md:
+/// `· → ✢ → ✳ → ✶ → ✻ → ✽ → ✻ → ✶ → ✳ → ✢ → · ...`
+pub const SPINNER_FRAMES: &[&str] = &["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
 
-/// Curated Gemini reasoning and thinking verbs per DESIGN.md.
+/// Curated whimsical thinking verbs per DESIGN.md.
 pub const WHIMSICAL_VERBS: &[&str] = &[
-    "Reasoning...",
-    "Synthesizing...",
-    "Analyzing...",
-    "Formulating...",
-    "Contextualizing...",
-    "Optimizing...",
-    "Decomposing...",
-    "Deriving...",
-    "Structuring...",
-    "Refining...",
+    "Percolating...",
+    "Cogitating...",
+    "Moonwalking...",
+    "Shenaniganing...",
+    "Ruminating...",
+    "Noodling...",
+    "Baking...",
+    "Fermenting...",
+    "Transmuting...",
     "Pondering...",
+    "Brewing...",
+    "Synthesizing...",
+    "Conjuring...",
+    "Deliberating...",
+    "Manifesting...",
+    "Vibing...",
+    "Simmering...",
+    "Decocting...",
+    "Untangling...",
     "Orchestrating...",
-    "Evaluating...",
-    "Navigating...",
     "Harmonizing...",
+    "Daydreaming...",
+    "Polishing...",
+    "Refactoring...",
+    "Calculating...",
+    "Optimizing...",
 ];
 
 /// Dashed ASCII border set for input box per DESIGN.md (`- - | -`).
@@ -111,9 +122,9 @@ pub const DASHED_INPUT_SET: BorderSet = BorderSet {
     horizontal_bottom: "-",
 };
 
-/// Signature prompt glyph: `✦ ` for Gemini CLI.
+/// Signature prompt glyph: `> ` for Codex CLI.
 pub fn prompt_glyph() -> &'static str {
-    "✦ "
+    "> "
 }
 
 /// Get active spinner frame glyph for current animation tick.
@@ -121,13 +132,12 @@ pub fn spinner_frame(tick: usize) -> &'static str {
     SPINNER_FRAMES[tick % SPINNER_FRAMES.len()]
 }
 
-/// Shimmer color for thinking indicator (Gemini Blue ↔ Cyan ↔ Violet gradient).
+/// Shimmer terracotta color for thinking indicator.
 pub fn thinking_shimmer_color(tick: usize) -> Color {
-    match (tick / 2) % 4 {
-        0 => COLOR_PRIMARY,        // Electric Blue #4285f4
-        1 => COLOR_ACCENT,         // Sky Cyan #38bdf8
-        2 => COLOR_SECONDARY,      // Sparkle Violet #a855f7
-        _ => COLOR_GEMINI_SHIMMER, // Soft Blue #8ab4f8
+    if (tick / 2) % 2 == 0 {
+        COLOR_PRIMARY
+    } else {
+        COLOR_CLAUDE_SHIMMER
     }
 }
 

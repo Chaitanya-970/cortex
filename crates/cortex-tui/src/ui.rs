@@ -995,7 +995,7 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         ));
     } else {
         header_spans.push(Span::styled(
-            "✦ Ready",
+            "● Ready",
             Style::default().fg(theme::COLOR_SUCCESS),
         ));
     }
@@ -1015,7 +1015,7 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         text_lines.push(Line::from(""));
         text_lines.push(Line::from(vec![
             Span::styled(
-                "  ✦ Cortex Code",
+                "  ◈ Cortex Code",
                 Style::default()
                     .fg(theme::COLOR_PRIMARY)
                     .add_modifier(Modifier::BOLD),
