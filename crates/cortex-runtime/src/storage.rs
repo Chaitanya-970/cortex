@@ -3,16 +3,20 @@
 //! Provides schema versioning, transaction-wrapped migrations, run lifecycle tracking,
 //! and event stream storage for the Cortex runtime.
 
-use chrono::Utc;
-use cortex_core::{CortexError, EventRecord, Result, RunId};
+use chrono::{DateTime, Utc};
+use cortex_core::{CortexError, EventRecord, JobId, Result, RunId};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Mutex;
 
+use crate::scheduler::{JobRunRecord, JobRunStatus, JobStatus, OverlapPolicy, ScheduledJob};
+
 /// Current schema migration version.
-pub const CURRENT_SCHEMA_VERSION: i32 = 1;
+pub const CURRENT_SCHEMA_VERSION: i32 = 2;
 const SCHEMA_V1: &str = include_str!("../migrations/001_initial_schema.sql");
+const SCHEMA_V2: &str = include_str!("../migrations/002_cron_scheduler.sql");
 
 /// Summary information for an execution run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -131,6 +135,21 @@ impl RunStore {
             )
             .map_err(|e| {
                 CortexError::Internal(format!("failed to record schema_version 1: {}", e))
+            })?;
+        }
+
+        if current_version < 2 {
+            conn.execute_batch(SCHEMA_V2).map_err(|e| {
+                CortexError::Internal(format!("failed to apply migration 002: {}", e))
+            })?;
+
+            let now = Utc::now().to_rfc3339();
+            conn.execute(
+                "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
+                params![2, now],
+            )
+            .map_err(|e| {
+                CortexError::Internal(format!("failed to record schema_version 2: {}", e))
             })?;
         }
 
@@ -371,6 +390,504 @@ impl RunStore {
         }
 
         Ok(records)
+    }
+
+    /// Save or update a scheduled cron job.
+    pub fn save_cron_job(&self, job: &ScheduledJob) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let next_run_str = job.next_run_at.map(|dt| dt.to_rfc3339());
+        let last_run_str = job.last_run_at.map(|dt| dt.to_rfc3339());
+        let created_str = job.created_at.to_rfc3339();
+        let updated_str = job.updated_at.to_rfc3339();
+
+        conn.execute(
+            r#"
+            INSERT INTO cron_jobs (
+                id, name, schedule, prompt, overlap_policy, status,
+                next_run_at, last_run_at, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                schedule = excluded.schedule,
+                prompt = excluded.prompt,
+                overlap_policy = excluded.overlap_policy,
+                status = excluded.status,
+                next_run_at = excluded.next_run_at,
+                last_run_at = excluded.last_run_at,
+                updated_at = excluded.updated_at
+            "#,
+            params![
+                job.id.as_str(),
+                job.name,
+                job.schedule,
+                job.prompt,
+                job.overlap_policy.as_str(),
+                job.status.as_str(),
+                next_run_str,
+                last_run_str,
+                created_str,
+                updated_str,
+            ],
+        )
+        .map_err(map_sql_err)?;
+
+        Ok(())
+    }
+
+    /// Query a scheduled cron job by its identifier.
+    pub fn get_cron_job(&self, id: &JobId) -> Result<Option<ScheduledJob>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT id, name, schedule, prompt, overlap_policy, status,
+                       next_run_at, last_run_at, created_at, updated_at
+                FROM cron_jobs
+                WHERE id = ?1
+                "#,
+            )
+            .map_err(map_sql_err)?;
+
+        let mut rows = stmt
+            .query_map(params![id.as_str()], |row| {
+                let id_str: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let schedule: String = row.get(2)?;
+                let prompt: String = row.get(3)?;
+                let overlap_policy_str: String = row.get(4)?;
+                let status_str: String = row.get(5)?;
+                let next_run_str: Option<String> = row.get(6)?;
+                let last_run_str: Option<String> = row.get(7)?;
+                let created_str: String = row.get(8)?;
+                let updated_str: String = row.get(9)?;
+
+                Ok((
+                    id_str,
+                    name,
+                    schedule,
+                    prompt,
+                    overlap_policy_str,
+                    status_str,
+                    next_run_str,
+                    last_run_str,
+                    created_str,
+                    updated_str,
+                ))
+            })
+            .map_err(map_sql_err)?;
+
+        if let Some(r) = rows.next() {
+            let (
+                id_str,
+                name,
+                schedule,
+                prompt,
+                overlap_policy_str,
+                status_str,
+                next_run_str,
+                last_run_str,
+                created_str,
+                updated_str,
+            ) = r.map_err(map_sql_err)?;
+
+            let overlap_policy =
+                OverlapPolicy::from_str(&overlap_policy_str).unwrap_or(OverlapPolicy::Skip);
+            let status = JobStatus::from_str(&status_str).unwrap_or(JobStatus::Active);
+
+            let next_run_at = next_run_str
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc));
+            let last_run_at = last_run_str
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc));
+            let created_at = DateTime::parse_from_rfc3339(&created_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            let updated_at = DateTime::parse_from_rfc3339(&updated_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            Ok(Some(ScheduledJob {
+                id: JobId::from(id_str),
+                name,
+                schedule,
+                prompt,
+                overlap_policy,
+                status,
+                next_run_at,
+                last_run_at,
+                created_at,
+                updated_at,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// List all registered scheduled cron jobs ordered by creation timestamp.
+    pub fn list_cron_jobs(&self) -> Result<Vec<ScheduledJob>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT id, name, schedule, prompt, overlap_policy, status,
+                       next_run_at, last_run_at, created_at, updated_at
+                FROM cron_jobs
+                ORDER BY created_at ASC
+                "#,
+            )
+            .map_err(map_sql_err)?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                let id_str: String = row.get(0)?;
+                let name: String = row.get(1)?;
+                let schedule: String = row.get(2)?;
+                let prompt: String = row.get(3)?;
+                let overlap_policy_str: String = row.get(4)?;
+                let status_str: String = row.get(5)?;
+                let next_run_str: Option<String> = row.get(6)?;
+                let last_run_str: Option<String> = row.get(7)?;
+                let created_str: String = row.get(8)?;
+                let updated_str: String = row.get(9)?;
+
+                Ok((
+                    id_str,
+                    name,
+                    schedule,
+                    prompt,
+                    overlap_policy_str,
+                    status_str,
+                    next_run_str,
+                    last_run_str,
+                    created_str,
+                    updated_str,
+                ))
+            })
+            .map_err(map_sql_err)?;
+
+        let mut jobs = Vec::new();
+        for r in rows {
+            let (
+                id_str,
+                name,
+                schedule,
+                prompt,
+                overlap_policy_str,
+                status_str,
+                next_run_str,
+                last_run_str,
+                created_str,
+                updated_str,
+            ) = r.map_err(map_sql_err)?;
+
+            let overlap_policy =
+                OverlapPolicy::from_str(&overlap_policy_str).unwrap_or(OverlapPolicy::Skip);
+            let status = JobStatus::from_str(&status_str).unwrap_or(JobStatus::Active);
+
+            let next_run_at = next_run_str
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc));
+            let last_run_at = last_run_str
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc));
+            let created_at = DateTime::parse_from_rfc3339(&created_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            let updated_at = DateTime::parse_from_rfc3339(&updated_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            jobs.push(ScheduledJob {
+                id: JobId::from(id_str),
+                name,
+                schedule,
+                prompt,
+                overlap_policy,
+                status,
+                next_run_at,
+                last_run_at,
+                created_at,
+                updated_at,
+            });
+        }
+
+        Ok(jobs)
+    }
+
+    /// Delete a scheduled cron job and its execution history.
+    pub fn delete_cron_job(&self, id: &JobId) -> Result<bool> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let rows_affected = conn
+            .execute("DELETE FROM cron_jobs WHERE id = ?1", params![id.as_str()])
+            .map_err(map_sql_err)?;
+
+        Ok(rows_affected > 0)
+    }
+
+    /// Update next run time, last run time, and status of a scheduled job.
+    pub fn update_cron_job_schedule(
+        &self,
+        id: &JobId,
+        next_run_at: Option<&str>,
+        last_run_at: Option<&str>,
+        status: &str,
+    ) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            r#"
+            UPDATE cron_jobs
+            SET next_run_at = ?1,
+                last_run_at = COALESCE(?2, last_run_at),
+                status = ?3,
+                updated_at = ?4
+            WHERE id = ?5
+            "#,
+            params![next_run_at, last_run_at, status, now, id.as_str()],
+        )
+        .map_err(map_sql_err)?;
+
+        Ok(())
+    }
+
+    /// Record initial execution of a scheduled cron run.
+    pub fn record_cron_run_start(
+        &self,
+        run_id: &str,
+        job_id: &JobId,
+        started_at: &str,
+    ) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        conn.execute(
+            r#"
+            INSERT INTO cron_job_runs (id, job_id, status, started_at)
+            VALUES (?1, ?2, 'running', ?3)
+            "#,
+            params![run_id, job_id.as_str(), started_at],
+        )
+        .map_err(map_sql_err)?;
+
+        Ok(())
+    }
+
+    /// Record completion or termination of a scheduled cron run.
+    pub fn record_cron_run_finish(
+        &self,
+        run_id: &str,
+        status: &str,
+        finished_at: &str,
+        duration_ms: Option<u64>,
+        output: Option<&str>,
+        error: Option<&str>,
+    ) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        conn.execute(
+            r#"
+            UPDATE cron_job_runs
+            SET status = ?1,
+                finished_at = ?2,
+                duration_ms = ?3,
+                output = ?4,
+                error = ?5
+            WHERE id = ?6
+            "#,
+            params![status, finished_at, duration_ms, output, error, run_id],
+        )
+        .map_err(map_sql_err)?;
+
+        Ok(())
+    }
+
+    /// Cancel an active scheduled cron run.
+    pub fn cancel_cron_run(&self, run_id: &str, finished_at: &str, reason: &str) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        conn.execute(
+            r#"
+            UPDATE cron_job_runs
+            SET status = 'cancelled',
+                finished_at = ?1,
+                error = ?2
+            WHERE id = ?3
+            "#,
+            params![finished_at, reason, run_id],
+        )
+        .map_err(map_sql_err)?;
+
+        Ok(())
+    }
+
+    /// Query the currently active running execution for a scheduled job, if any.
+    pub fn get_active_cron_run(&self, job_id: &JobId) -> Result<Option<JobRunRecord>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT id, job_id, status, started_at, finished_at, duration_ms, output, error
+                FROM cron_job_runs
+                WHERE job_id = ?1 AND status = 'running'
+                ORDER BY started_at DESC
+                LIMIT 1
+                "#,
+            )
+            .map_err(map_sql_err)?;
+
+        let mut rows = stmt
+            .query_map(params![job_id.as_str()], |row| {
+                let id: String = row.get(0)?;
+                let job_id_str: String = row.get(1)?;
+                let status_str: String = row.get(2)?;
+                let started_str: String = row.get(3)?;
+                let finished_str: Option<String> = row.get(4)?;
+                let duration_ms: Option<u64> = row.get(5)?;
+                let output: Option<String> = row.get(6)?;
+                let error: Option<String> = row.get(7)?;
+
+                Ok((
+                    id,
+                    job_id_str,
+                    status_str,
+                    started_str,
+                    finished_str,
+                    duration_ms,
+                    output,
+                    error,
+                ))
+            })
+            .map_err(map_sql_err)?;
+
+        if let Some(r) = rows.next() {
+            let (id, job_id_str, status_str, started_str, finished_str, duration_ms, output, error) =
+                r.map_err(map_sql_err)?;
+
+            let status = JobRunStatus::from_str(&status_str).unwrap_or(JobRunStatus::Running);
+            let started_at = DateTime::parse_from_rfc3339(&started_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            let finished_at = finished_str
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc));
+
+            Ok(Some(JobRunRecord {
+                id,
+                job_id: JobId::from(job_id_str),
+                status,
+                started_at,
+                finished_at,
+                duration_ms,
+                output,
+                error,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Query recorded runs for a scheduled job.
+    pub fn list_cron_job_runs(&self, job_id: &JobId, limit: usize) -> Result<Vec<JobRunRecord>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let mut stmt = conn
+            .prepare(
+                r#"
+                SELECT id, job_id, status, started_at, finished_at, duration_ms, output, error
+                FROM cron_job_runs
+                WHERE job_id = ?1
+                ORDER BY started_at DESC
+                LIMIT ?2
+                "#,
+            )
+            .map_err(map_sql_err)?;
+
+        let rows = stmt
+            .query_map(params![job_id.as_str(), limit as i64], |row| {
+                let id: String = row.get(0)?;
+                let job_id_str: String = row.get(1)?;
+                let status_str: String = row.get(2)?;
+                let started_str: String = row.get(3)?;
+                let finished_str: Option<String> = row.get(4)?;
+                let duration_ms: Option<u64> = row.get(5)?;
+                let output: Option<String> = row.get(6)?;
+                let error: Option<String> = row.get(7)?;
+
+                Ok((
+                    id,
+                    job_id_str,
+                    status_str,
+                    started_str,
+                    finished_str,
+                    duration_ms,
+                    output,
+                    error,
+                ))
+            })
+            .map_err(map_sql_err)?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            let (id, job_id_str, status_str, started_str, finished_str, duration_ms, output, error) =
+                r.map_err(map_sql_err)?;
+
+            let status = JobRunStatus::from_str(&status_str).unwrap_or(JobRunStatus::Completed);
+            let started_at = DateTime::parse_from_rfc3339(&started_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            let finished_at = finished_str
+                .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+                .map(|dt| dt.with_timezone(&Utc));
+
+            list.push(JobRunRecord {
+                id,
+                job_id: JobId::from(job_id_str),
+                status,
+                started_at,
+                finished_at,
+                duration_ms,
+                output,
+                error,
+            });
+        }
+
+        Ok(list)
     }
 }
 

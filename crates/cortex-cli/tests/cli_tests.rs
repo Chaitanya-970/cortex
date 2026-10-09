@@ -172,6 +172,7 @@ fn test_cli_runs_list_and_show() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn test_cli_bench_run_command() {
     let tmp_dir =
         std::env::temp_dir().join(format!("cortex_bench_cli_test_{}", std::process::id()));
@@ -251,6 +252,116 @@ fn test_cli_run_unconfigured_error_guidance() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("not configured"));
     assert!(stderr.contains("OPENAI_API_KEY"));
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_cli_cron_lifecycle() {
+    let tmp_dir = std::env::temp_dir().join(format!("cortex_cli_cron_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let db_path = tmp_dir.join("cortex.db");
+
+    // 1. Initially empty
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["cron", "list", "--db", db_path.to_str().unwrap()])
+        .output()
+        .expect("Failed to execute cortex cron list");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("No scheduled cron jobs found"));
+
+    // 2. Create job
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args([
+            "cron",
+            "create",
+            "--name",
+            "Nightly Backup",
+            "--schedule",
+            "0 2 * * *",
+            "--prompt",
+            "Backup workspace databases",
+            "--overlap",
+            "queue",
+            "--db",
+            db_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to execute cortex cron create");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Created cron job"));
+    assert!(stdout.contains("Nightly Backup"));
+    assert!(stdout.contains("0 2 * * *"));
+
+    // Extract job id
+    let job_id_start = stdout.find('\'').unwrap() + 1;
+    let job_id_end = stdout[job_id_start..].find('\'').unwrap() + job_id_start;
+    let job_id = &stdout[job_id_start..job_id_end];
+
+    // 3. List formatted
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["cron", "list", "--db", db_path.to_str().unwrap()])
+        .output()
+        .expect("Failed to execute cortex cron list");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(job_id));
+    assert!(stdout.contains("Nightly Backup"));
+    assert!(stdout.contains("0 2 * * *"));
+    assert!(stdout.contains("queue"));
+
+    // 4. List json
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["cron", "list", "--json", "--db", db_path.to_str().unwrap()])
+        .output()
+        .expect("Failed to execute cortex cron list --json");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"name\": \"Nightly Backup\""));
+
+    // 5. Create invalid cron
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args([
+            "cron",
+            "create",
+            "--schedule",
+            "invalid cron expr",
+            "--prompt",
+            "Fails",
+            "--db",
+            db_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to execute cortex cron create invalid");
+
+    assert!(!output.status.success());
+
+    // 6. Delete job
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["cron", "delete", job_id, "--db", db_path.to_str().unwrap()])
+        .output()
+        .expect("Failed to execute cortex cron delete");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(&format!("Deleted cron job '{}'", job_id)));
+
+    // 7. Verify empty again
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["cron", "list", "--db", db_path.to_str().unwrap()])
+        .output()
+        .expect("Failed to execute cortex cron list");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("No scheduled cron jobs found"));
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }

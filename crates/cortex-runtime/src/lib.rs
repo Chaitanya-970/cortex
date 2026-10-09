@@ -14,6 +14,7 @@ pub mod mcp;
 pub mod model;
 pub mod providers;
 pub mod sandbox;
+pub mod scheduler;
 pub mod storage;
 pub mod tool;
 pub mod tools;
@@ -33,6 +34,10 @@ pub use providers::{
     create_model_provider, estimate_cost, AnthropicProvider, OpenAiCompatibleProvider,
 };
 pub use sandbox::{Sandbox, SandboxMode};
+pub use scheduler::{
+    CronExpression, CronField, CronParseError, JobRunRecord, JobRunStatus, JobStatus,
+    OverlapPolicy, Schedule, ScheduledJob, SchedulerEngine, TriggerResult,
+};
 pub use storage::{RunStore, RunSummary};
 pub use tool::{validate_schema, PermissionLevel, Tool, ToolDefinition, ToolRegistry, ToolResult};
 pub use workspace::Workspace;

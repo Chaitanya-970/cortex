@@ -17,7 +17,7 @@ pub mod settings;
 
 pub use error::{CortexError, Result};
 pub use event::{EventRecord, ExecutionEvent};
-pub use id::{AgentId, RunId, SessionId};
+pub use id::{AgentId, JobId, RunId, SessionId};
 pub use redact::Redactor;
 pub use settings::UserSettings;
 

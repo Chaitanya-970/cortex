@@ -4,12 +4,13 @@
 //! including execution run inspection and tracing queries.
 
 use clap::{Parser, Subcommand};
-use cortex_core::{RunId, VERSION};
+use cortex_core::{JobId, RunId, VERSION};
 use cortex_runtime::{
-    create_model_provider, tools, AgentContext, AgentLoop, CortexConfig, McpManager, RunStore,
-    RunSummary, ToolRegistry, Workspace,
+    create_model_provider, scheduler::OverlapPolicy, tools, AgentContext, AgentLoop, CortexConfig,
+    McpManager, RunStore, RunSummary, SchedulerEngine, ToolRegistry, Workspace,
 };
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::Arc;
 
 /// Cortex - An open-source runtime and harness for autonomous AI workers.
@@ -102,6 +103,12 @@ enum Commands {
         #[arg(short, long)]
         db: Option<PathBuf>,
     },
+
+    /// Manage scheduled cron jobs and persistent triggers.
+    Cron {
+        #[command(subcommand)]
+        action: CronCommands,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -169,6 +176,57 @@ enum BenchCommands {
         /// Maximum agent iterations allowed per task.
         #[arg(short, long, default_value = "10")]
         max_iterations: usize,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum CronCommands {
+    /// List all registered scheduled cron jobs.
+    List {
+        /// Optional path to SQLite database. Defaults to ~/.cortex/cortex.db.
+        #[arg(long)]
+        db: Option<PathBuf>,
+
+        /// Output registered jobs in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Create and register a new scheduled cron job.
+    Create {
+        /// Human-readable name for the job.
+        #[arg(short, long)]
+        name: Option<String>,
+
+        /// 5-field cron expression (e.g., "*/15 * * * *") or one-shot ISO timestamp.
+        #[arg(short, long)]
+        schedule: String,
+
+        /// Task prompt to execute when triggered.
+        #[arg(short, long, alias = "task")]
+        prompt: String,
+
+        /// Target agent name (e.g., coding, monitor).
+        #[arg(short, long)]
+        agent: Option<String>,
+
+        /// Overlap policy when previous run is active: skip, queue, or replace.
+        #[arg(short, long, default_value = "skip")]
+        overlap: String,
+
+        /// Optional path to SQLite database. Defaults to ~/.cortex/cortex.db.
+        #[arg(long)]
+        db: Option<PathBuf>,
+    },
+
+    /// Delete a registered scheduled cron job by its identifier.
+    Delete {
+        /// Identifier of the job to delete.
+        id: String,
+
+        /// Optional path to SQLite database. Defaults to ~/.cortex/cortex.db.
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
 }
 
@@ -332,6 +390,104 @@ fn run_bench(
     }
 
     Ok(())
+}
+
+fn handle_cron_list(
+    engine: &SchedulerEngine,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let jobs = engine.list_jobs()?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&jobs)?);
+        return Ok(());
+    }
+
+    if jobs.is_empty() {
+        println!("No scheduled cron jobs found. Create one with 'cortex cron create'.");
+        return Ok(());
+    }
+
+    println!(
+        "{:<28} {:<20} {:<16} {:<9} {:<10} {:<24} LAST RUN",
+        "JOB ID", "NAME", "SCHEDULE", "OVERLAP", "STATUS", "NEXT RUN"
+    );
+    println!("{:-<110}", "");
+
+    for job in jobs {
+        let next_str = job
+            .next_run_at
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| "-".to_string());
+        let last_str = job
+            .last_run_at
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| "-".to_string());
+
+        let name_display = if job.name.len() > 18 {
+            format!("{}...", &job.name[..15])
+        } else {
+            job.name.clone()
+        };
+
+        println!(
+            "{:<28} {:<20} {:<16} {:<9} {:<10} {:<24} {}",
+            job.id.as_str(),
+            name_display,
+            job.schedule,
+            job.overlap_policy.as_str(),
+            job.status.as_str(),
+            next_str,
+            last_str,
+        );
+    }
+
+    Ok(())
+}
+
+fn handle_cron_create(
+    engine: &SchedulerEngine,
+    name: Option<String>,
+    schedule: &str,
+    prompt: &str,
+    overlap_str: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let policy = OverlapPolicy::from_str(overlap_str)?;
+    let job_name = name.unwrap_or_else(|| {
+        if prompt.len() > 24 {
+            format!("{}...", &prompt[..21])
+        } else {
+            prompt.to_string()
+        }
+    });
+
+    let job = engine.register_job(job_name, schedule, prompt, policy)?;
+    let next_run = job
+        .next_run_at
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_else(|| "none".to_string());
+
+    println!("Created cron job '{}' ({}).", job.id, job.name);
+    println!("  Schedule: {}", job.schedule);
+    println!("  Overlap:  {}", job.overlap_policy);
+    println!("  Next Run: {}", next_run);
+    println!("  Prompt:   {}", job.prompt);
+
+    Ok(())
+}
+
+fn handle_cron_delete(
+    engine: &SchedulerEngine,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let job_id = JobId::from(id);
+    let deleted = engine.delete_job(&job_id)?;
+    if deleted {
+        println!("Deleted cron job '{}'.", id);
+        Ok(())
+    } else {
+        eprintln!("Error: Cron job '{}' not found.", id);
+        std::process::exit(1);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -831,6 +987,60 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Some(Commands::Cron { action }) => match action {
+            CronCommands::List { db, json } => {
+                let db_path = db.unwrap_or_else(default_db_path);
+                let store = Arc::new(match RunStore::open(&db_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error opening database: {}", e);
+                        std::process::exit(1);
+                    }
+                });
+                let engine = SchedulerEngine::new(store);
+                if let Err(e) = handle_cron_list(&engine, json) {
+                    eprintln!("Error listing cron jobs: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            CronCommands::Create {
+                name,
+                schedule,
+                prompt,
+                agent: _,
+                overlap,
+                db,
+            } => {
+                let db_path = db.unwrap_or_else(default_db_path);
+                let store = Arc::new(match RunStore::open(&db_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error opening database: {}", e);
+                        std::process::exit(1);
+                    }
+                });
+                let engine = SchedulerEngine::new(store);
+                if let Err(e) = handle_cron_create(&engine, name, &schedule, &prompt, &overlap) {
+                    eprintln!("Error creating cron job: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            CronCommands::Delete { id, db } => {
+                let db_path = db.unwrap_or_else(default_db_path);
+                let store = Arc::new(match RunStore::open(&db_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Error opening database: {}", e);
+                        std::process::exit(1);
+                    }
+                });
+                let engine = SchedulerEngine::new(store);
+                if let Err(e) = handle_cron_delete(&engine, &id) {
+                    eprintln!("Error deleting cron job: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        },
         None => {
             use std::io::IsTerminal;
             if std::io::stdin().is_terminal() {
@@ -1098,5 +1308,61 @@ mod tests {
         let args_dash = vec!["cortex", "dashboard"];
         let parsed_dash = Cli::try_parse_from(args_dash).unwrap();
         assert!(matches!(parsed_dash.command, Some(Commands::Tui { .. })));
+    }
+
+    #[test]
+    fn test_cli_parsing_cron_subcommands() {
+        let args_list = vec!["cortex", "cron", "list", "--json"];
+        let parsed_list = Cli::try_parse_from(args_list).unwrap();
+        match parsed_list.command {
+            Some(Commands::Cron {
+                action: CronCommands::List { json: true, .. },
+            }) => {}
+            _ => panic!("unexpected command parsed"),
+        }
+
+        let args_create = vec![
+            "cortex",
+            "cron",
+            "create",
+            "--name",
+            "Nightly Test",
+            "--schedule",
+            "0 2 * * *",
+            "--prompt",
+            "Run regression tests",
+            "--overlap",
+            "queue",
+        ];
+        let parsed_create = Cli::try_parse_from(args_create).unwrap();
+        match parsed_create.command {
+            Some(Commands::Cron {
+                action:
+                    CronCommands::Create {
+                        name: Some(name),
+                        schedule,
+                        prompt,
+                        overlap,
+                        ..
+                    },
+            }) => {
+                assert_eq!(name, "Nightly Test");
+                assert_eq!(schedule, "0 2 * * *");
+                assert_eq!(prompt, "Run regression tests");
+                assert_eq!(overlap, "queue");
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+
+        let args_delete = vec!["cortex", "cron", "delete", "job_12345"];
+        let parsed_delete = Cli::try_parse_from(args_delete).unwrap();
+        match parsed_delete.command {
+            Some(Commands::Cron {
+                action: CronCommands::Delete { id, .. },
+            }) => {
+                assert_eq!(id, "job_12345");
+            }
+            _ => panic!("unexpected command parsed"),
+        }
     }
 }

@@ -3,7 +3,7 @@
 
 use cortex_core::{CortexError, ExecutionEvent, Redactor, RunId};
 use cortex_runtime::model::{MockModelProvider, ModelOutput, ToolCall};
-use cortex_runtime::storage::RunStore;
+use cortex_runtime::storage::{RunStore, CURRENT_SCHEMA_VERSION};
 use cortex_runtime::tool::{Tool, ToolDefinition, ToolRegistry, ToolResult};
 use cortex_runtime::{AgentContext, AgentLoop, CancellationToken};
 use serde_json::json;
@@ -168,7 +168,7 @@ fn test_schema_migration_idempotency_and_file_persistence() {
     // Phase 1: Open store, insert data, and drop
     {
         let store = RunStore::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 1);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         store
             .record_run_start(&run_id, "File persistence test", "2026-10-08T00:00:00Z")
@@ -186,7 +186,7 @@ fn test_schema_migration_idempotency_and_file_persistence() {
     // Phase 2: Reopen same database file, verify schema migrations run idempotently and data preserved
     {
         let store = RunStore::open(&db_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 1);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
         let run = store.get_run(&run_id).unwrap().expect("run must persist");
         assert_eq!(run.task, "File persistence test");
