@@ -298,7 +298,8 @@ pub struct Agent {
 /// Thread-safe manager responsible for agent workers and their lifecycle transitions.
 #[derive(Debug, Clone, Default)]
 pub struct AgentManager {
-    agents: Arc<RwLock<HashMap<AgentId, Agent>>>,
+    pub(super) agents: Arc<RwLock<HashMap<AgentId, Agent>>>,
+    pub(super) coordination: Arc<Mutex<super::coordination::CoordinationState>>,
     events: Arc<RwLock<Vec<AgentLifecycleEvent>>>,
     subscribers: Arc<Mutex<Vec<Sender<AgentLifecycleEvent>>>>,
 }
@@ -308,6 +309,7 @@ impl AgentManager {
     pub fn new() -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
+            coordination: Arc::new(Mutex::new(super::coordination::CoordinationState::default())),
             events: Arc::new(RwLock::new(Vec::new())),
             subscribers: Arc::new(Mutex::new(Vec::new())),
         }
@@ -386,14 +388,24 @@ impl AgentManager {
             return Ok(());
         }
 
+        let mut coordination = self
+            .coordination
+            .lock()
+            .map_err(super::coordination::lock_error)?;
         agent.state.transition_to(AgentState::Ready)?;
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        let waker = coordination.revoke(agent_id);
+        drop(coordination);
         self.emit_event(AgentLifecycleEvent::AgentReady {
             agent_id: agent_id.clone(),
             timestamp: now,
         });
+        drop(lock);
+        if let Some(waker) = waker {
+            waker.wake();
+        }
 
         Ok(())
     }
@@ -466,14 +478,24 @@ impl AgentManager {
             )));
         }
 
+        let mut coordination = self
+            .coordination
+            .lock()
+            .map_err(super::coordination::lock_error)?;
         agent.state.transition_to(AgentState::Paused)?;
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        let waker = coordination.notify(agent_id);
+        drop(coordination);
         self.emit_event(AgentLifecycleEvent::AgentPaused {
             agent_id: agent_id.clone(),
             timestamp: now,
         });
+        drop(lock);
+        if let Some(waker) = waker {
+            waker.wake();
+        }
 
         Ok(())
     }
@@ -525,15 +547,25 @@ impl AgentManager {
             return Ok(());
         }
 
+        let mut coordination = self
+            .coordination
+            .lock()
+            .map_err(super::coordination::lock_error)?;
         agent.state.transition_to(AgentState::Stopped)?;
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        let waker = coordination.revoke(agent_id);
+        drop(coordination);
         self.emit_event(AgentLifecycleEvent::AgentStopped {
             agent_id: agent_id.clone(),
             reason: None,
             timestamp: now,
         });
+        drop(lock);
+        if let Some(waker) = waker {
+            waker.wake();
+        }
 
         Ok(())
     }
@@ -548,14 +580,24 @@ impl AgentManager {
             .get_mut(agent_id)
             .ok_or_else(|| CortexError::NotFound(format!("agent '{}' not found", agent_id)))?;
 
+        let mut coordination = self
+            .coordination
+            .lock()
+            .map_err(super::coordination::lock_error)?;
         agent.state.transition_to(AgentState::Ready)?;
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        let waker = coordination.revoke(agent_id);
+        drop(coordination);
         self.emit_event(AgentLifecycleEvent::AgentReady {
             agent_id: agent_id.clone(),
             timestamp: now,
         });
+        drop(lock);
+        if let Some(waker) = waker {
+            waker.wake();
+        }
 
         Ok(())
     }
@@ -571,15 +613,25 @@ impl AgentManager {
             .get_mut(agent_id)
             .ok_or_else(|| CortexError::NotFound(format!("agent '{}' not found", agent_id)))?;
 
+        let mut coordination = self
+            .coordination
+            .lock()
+            .map_err(super::coordination::lock_error)?;
         agent.state.transition_to(AgentState::Failed)?;
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        let waker = coordination.revoke(agent_id);
+        drop(coordination);
         self.emit_event(AgentLifecycleEvent::AgentFailed {
             agent_id: agent_id.clone(),
             error: err_str,
             timestamp: now,
         });
+        drop(lock);
+        if let Some(waker) = waker {
+            waker.wake();
+        }
 
         Ok(())
     }
@@ -621,8 +673,20 @@ impl AgentManager {
             }
         }
 
-        lock.remove(agent_id)
-            .ok_or_else(|| CortexError::NotFound(format!("agent '{}' not found", agent_id)))
+        let mut coordination = self
+            .coordination
+            .lock()
+            .map_err(super::coordination::lock_error)?;
+        let agent = lock
+            .remove(agent_id)
+            .ok_or_else(|| CortexError::NotFound(format!("agent '{}' not found", agent_id)))?;
+        let waker = coordination.remove(agent_id);
+        drop(coordination);
+        drop(lock);
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+        Ok(agent)
     }
 
     /// Subscribe to the live stream of agent lifecycle events.
