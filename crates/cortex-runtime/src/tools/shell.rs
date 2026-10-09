@@ -11,6 +11,11 @@ use std::sync::Arc;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+#[cfg(unix)]
+extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
+}
+
 /// Tool for executing shell commands inside the workspace root.
 pub struct ShellTool {
     workspace: Arc<Workspace>,
@@ -154,9 +159,13 @@ fn execute_shell_command(
         }
         #[cfg(unix)]
         {
-            let pgid = child.id();
-            let _ = Command::new("kill")
-                .args(["-9", &format!("-{}", pgid)])
+            let pgid = child.id() as i32;
+            unsafe {
+                let _ = kill(-pgid, 9);
+                let _ = kill(pgid, 9);
+            }
+            let _ = Command::new("sh")
+                .args(["-c", &format!("kill -9 -{} 2>/dev/null || true", pgid)])
                 .output();
         }
         let _ = child.kill();
