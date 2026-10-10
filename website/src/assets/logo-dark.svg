@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" fill="none">
+  <defs>
+    <linearGradient id="cortex-stroke-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#7dd3fc" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+    <linearGradient id="cortex-core-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#bae6fd" />
+      <stop offset="50%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#0284c7" />
+    </linearGradient>
+    <radialGradient id="cortex-glow-bg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.28" />
+      <stop offset="65%" stop-color="#0284c7" stop-opacity="0.08" />
+      <stop offset="100%" stop-color="#090d14" stop-opacity="0" />
+    </radialGradient>
+    <filter id="cortex-neon" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.5" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Ambient Glow -->
+  <circle cx="48" cy="48" r="44" fill="url(#cortex-glow-bg)" />
+
+  <!-- Outer Rounded Shield -->
+  <rect x="7" y="7" width="82" height="82" rx="22" fill="#0d1420" stroke="#1e293b" stroke-width="1.5" />
+
+  <!-- Outer Hex / Diamond Trace -->
+  <path d="M48 17 L77 33 L77 63 L48 79 L19 63 L19 33 Z" stroke="url(#cortex-stroke-grad)" stroke-width="2.5" stroke-linejoin="round" fill="rgba(56, 189, 248, 0.05)" filter="url(#cortex-neon)" />
+
+  <!-- Inner Diamond Interconnect -->
+  <path d="M48 26 L67 48 L48 70 L29 48 Z" stroke="#38bdf8" stroke-width="1.75" stroke-dasharray="3 3" fill="none" opacity="0.8" />
+
+  <!-- Center Neural Node -->
+  <circle cx="48" cy="48" r="8.5" fill="url(#cortex-core-grad)" filter="url(#cortex-neon)" />
+  <circle cx="48" cy="48" r="3.5" fill="#ffffff" />
+
+  <!-- Peripheral Satellite Nodes -->
+  <circle cx="48" cy="17" r="4.5" fill="#bae6fd" />
+  <circle cx="77" cy="33" r="4" fill="#7dd3fc" />
+  <circle cx="77" cy="63" r="4" fill="#38bdf8" />
+  <circle cx="48" cy="79" r="4.5" fill="#0284c7" />
+  <circle cx="19" cy="63" r="4" fill="#38bdf8" />
+  <circle cx="19" cy="33" r="4" fill="#7dd3fc" />
+
+  <!-- Radial Connector Spokes -->
+  <line x1="48" y1="26" x2="48" y2="39.5" stroke="#7dd3fc" stroke-width="1.75" opacity="0.85" />
+  <line x1="48" y1="56.5" x2="48" y2="70" stroke="#38bdf8" stroke-width="1.75" opacity="0.85" />
+  <line x1="37.5" y1="48" x2="29" y2="48" stroke="#7dd3fc" stroke-width="1.75" opacity="0.85" />
+  <line x1="58.5" y1="48" x2="67" y2="48" stroke="#38bdf8" stroke-width="1.75" opacity="0.85" />
+</svg>

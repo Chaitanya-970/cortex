@@ -1,0 +1,122 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+---
+
+<StarlightPage frontmatter={{ title: 'Cortex', template: 'splash' }}>
+  <div class="term-container">
+    
+    <!-- Centered Header Banner -->
+    <div class="term-banner">
+      <h1 class="huge-cortex-title">
+        CORTEX
+      </h1>
+      
+      <p class="term-subtitle">
+        <strong>Model output is untrusted input. The runtime is the sole execution authority.</strong><br />
+        Deterministic workspace sandboxing, append-only SQLite tracing, and multi-agent coordination.
+      </p>
+
+      <div class="term-actions">
+        <a href="/getting-started/quickstart/" class="term-btn-primary">
+          <span>&gt; quickstart</span>
+        </a>
+        <a href="/reference/cli/" class="term-btn-secondary">
+          <span>cli reference</span>
+        </a>
+        <a href="/architecture/overview/" class="term-btn-secondary">
+          <span>architecture</span>
+        </a>
+        <a href="https://github.com/x1-xh/cortex" target="_blank" rel="noopener noreferrer" class="term-btn-secondary">
+          <span>github ↗</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- Minimal Terminal Box with Install & Run Commands -->
+    <div class="term-box">
+      <div class="term-box-header">
+        <span>$ INSTALL &amp; QUICKSTART</span>
+        <span>bash</span>
+      </div>
+      <div class="term-box-body">
+
+        <!-- 1. Install -->
+        <div class="term-cmd-row">
+          <div class="term-cmd-label">1. Install Globally (Rust &gt;= 1.75)</div>
+          <div class="term-code">
+            <span class="term-prompt">$</span>cargo install --git https://github.com/x1-xh/cortex.git cortex-cli
+          </div>
+        </div>
+
+        <!-- 2. Set credentials -->
+        <div class="term-cmd-row">
+          <div class="term-cmd-label">2. Set API Key (Or use local Ollama)</div>
+          <div class="term-code">
+            <span class="term-prompt">$</span>export OPENAI_API_KEY="sk-..." <span class="term-comment"># or ANTHROPIC_API_KEY</span>
+          </div>
+        </div>
+
+        <!-- 3. Run Agent Task -->
+        <div class="term-cmd-row">
+          <div class="term-cmd-label">3. Run Autonomous Agent Task</div>
+          <div class="term-code">
+            <span class="term-prompt">$</span>cortex run "inspect src/lib.rs and fix compiler warnings"<br />
+            <span class="term-comment"># With explicit workspace sandboxing:</span><br />
+            <span class="term-prompt">$</span>cortex run "refactor error handling" --workspace /path/to/project
+          </div>
+        </div>
+
+        <!-- 4. Launch TUI -->
+        <div class="term-cmd-row">
+          <div class="term-cmd-label">4. Launch Terminal UI Control Plane</div>
+          <div class="term-code">
+            <span class="term-prompt">$</span>cortex tui
+          </div>
+        </div>
+
+        <!-- 5. Evals -->
+        <div class="term-cmd-row">
+          <div class="term-cmd-label">5. Run Benchmark Evals</div>
+          <div class="term-code">
+            <span class="term-prompt">$</span>cortex bench run --suite coding
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Core Invariants (Ultra Minimal) -->
+    <div class="term-invariants">
+      <div class="term-invariants-title">
+        <span>◈ RUNTIME SECURITY INVARIANTS</span>
+      </div>
+      <ul class="term-invariants-list">
+        <li>
+          <strong>Runtime Authority:</strong> Model proposes tool calls; the Rust runtime verifies schemas and executes.
+        </li>
+        <li>
+          <strong>Workspace Sandbox:</strong> Path canonicalization denies directory traversal (<code>../</code>) and symlink escape.
+        </li>
+        <li>
+          <strong>SQLite Tracing:</strong> Append-only event store with automatic secret redaction (<code>sk-...</code>) &amp; replay.
+        </li>
+        <li>
+          <strong>Multi-Agent Bus:</strong> Bounded inboxes, supervisor-worker task queue, and cycle detection.
+        </li>
+      </ul>
+    </div>
+
+    <!-- Fast Documentation Links -->
+    <div class="term-nav-links">
+      <a href="/getting-started/quickstart/" class="term-nav-tag">/getting-started/quickstart</a>
+      <a href="/getting-started/installation/" class="term-nav-tag">/getting-started/installation</a>
+      <a href="/architecture/overview/" class="term-nav-tag">/architecture/overview</a>
+      <a href="/guides/coding-agent/" class="term-nav-tag">/guides/coding-agent</a>
+      <a href="/guides/tui/" class="term-nav-tag">/guides/tui</a>
+      <a href="/guides/multi-agent/" class="term-nav-tag">/guides/multi-agent</a>
+      <a href="/reference/cli/" class="term-nav-tag">/reference/cli</a>
+      <a href="/security/threat-model/" class="term-nav-tag">/security/threat-model</a>
+    </div>
+
+  </div>
+</StarlightPage>

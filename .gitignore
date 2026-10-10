@@ -34,3 +34,8 @@ lcov.info
 
 # Document files
 *.docx
+
+# Website
+website/node_modules/
+website/dist/
+website/.astro/

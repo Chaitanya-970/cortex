@@ -1,0 +1,482 @@
+/* ==========================================================================
+   Cortex Agent — Dual-Typography Design System
+   - Docs part: Clean, professional technical reading font (Inter)
+   - Landing page: Monospace terminal font (JetBrains Mono & Space Mono)
+   - Code & CLI: Monospace (JetBrains Mono) everywhere
+   ========================================================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap');
+
+:root {
+  /* Documentation Professional Typography */
+  --sl-font: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-term-heading: 'Space Mono', 'JetBrains Mono', monospace;
+
+  /* Starlight Primary Brand Accents (Light Blue / Electric Sky) */
+  --sl-color-accent-low: #082136;
+  --sl-color-accent: #38bdf8;
+  --sl-color-accent-high: #bae6fd;
+
+  /* Cortex Light Blue Palette */
+  --cortex-blue: #38bdf8;
+  --cortex-shimmer: #7dd3fc;
+  --cortex-ice: #bae6fd;
+  --cortex-glow: rgba(56, 189, 248, 0.12);
+  --cortex-terracotta: var(--cortex-blue);
+  --cortex-indigo: #818cf8;
+  --cortex-lavender: #c4b5fd;
+  --cortex-green: #34d399;
+  --cortex-amber: #fbbf24;
+  --cortex-red: #f87171;
+}
+
+:root,
+:root[data-theme='dark'],
+:root[data-theme='light'] {
+  --sl-color-bg: #090d14 !important;
+  --sl-color-bg-sidebar: #06090e !important;
+  --sl-color-bg-nav: #06090e !important;
+  --sl-color-bg-inline-code: #131b26 !important;
+  --sl-color-gray-1: #f1f5f9 !important;
+  --sl-color-gray-2: #cbd5e1 !important;
+  --sl-color-gray-3: #94a3b8 !important;
+  --sl-color-gray-4: #64748b !important;
+  --sl-color-gray-5: #334155 !important;
+  --sl-color-gray-6: #1e293b !important;
+  --sl-color-hairline: #1e293b !important;
+  --cortex-blue: #38bdf8 !important;
+  --cortex-shimmer: #7dd3fc !important;
+  --cortex-glow: rgba(56, 189, 248, 0.12) !important;
+  color-scheme: dark !important;
+}
+
+html,
+body {
+  background-color: #090d14 !important;
+  color: #cbd5e1 !important;
+}
+
+/* Hide theme select dropdown and orphaned divider */
+starlight-theme-select {
+  display: none !important;
+}
+
+.social-icons::after {
+  display: none !important;
+}
+
+/* ==========================================================================
+   Documentation Pages: Professional Technical Style
+   ========================================================================== */
+
+/* Header & Site Title */
+header.header {
+  border-bottom: 1px solid var(--sl-color-hairline);
+  background: var(--sl-color-bg-nav);
+}
+
+.site-title,
+.site-title span {
+  font-family: 'Righteous', 'Bungee', cursive, sans-serif !important;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  font-size: 1.35rem;
+  text-transform: uppercase;
+  color: var(--cortex-blue) !important;
+}
+
+/* Centered Search Bar in Header */
+@media (min-width: 50rem) {
+  header.header div.header {
+    display: grid !important;
+    grid-template-columns: 1fr minmax(auto, 26rem) 1fr !important;
+    align-items: center !important;
+  }
+
+  header.header div.header > .title-wrapper {
+    justify-self: start !important;
+  }
+
+  header.header div.header > .sl-flex:not(.title-wrapper):not(.right-group) {
+    justify-self: center !important;
+    width: 100% !important;
+    display: flex !important;
+    justify-content: center !important;
+  }
+
+  header.header site-search {
+    width: 100% !important;
+    display: flex !important;
+    justify-content: center !important;
+  }
+
+  header.header button[data-open-modal] {
+    width: 100% !important;
+    max-width: 24rem !important;
+    margin: 0 auto !important;
+    border-radius: 6px !important;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  header.header button[data-open-modal]:hover {
+    border-color: var(--cortex-blue) !important;
+  }
+
+  header.header div.header > .right-group {
+    justify-self: end !important;
+  }
+}
+
+/* Sidebar Navigation (Clean & Professional) */
+.sidebar-pane {
+  font-family: var(--sl-font);
+  font-size: 0.9rem;
+}
+
+.sidebar-pane [aria-current="page"] {
+  border-left: 2px solid var(--cortex-blue);
+  color: var(--cortex-shimmer) !important;
+  font-weight: 600;
+  background: var(--cortex-glow);
+}
+
+.right-sidebar {
+  font-family: var(--sl-font);
+  font-size: 0.85rem;
+}
+
+/* Markdown Documentation Typography (Professional Prose) */
+.sl-markdown-content {
+  font-family: var(--sl-font);
+  font-size: 1rem;
+  line-height: 1.75;
+  color: var(--sl-color-gray-2);
+}
+
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.sl-markdown-content h3,
+.sl-markdown-content h4 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--sl-color-gray-1);
+}
+
+.sl-markdown-content h1 {
+  color: var(--cortex-blue);
+  font-size: 2.25rem;
+  margin-bottom: 1.5rem;
+  line-height: 1.2;
+}
+
+.sl-markdown-content h2 {
+  font-size: 1.5rem;
+  margin-top: 2.5rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--sl-color-hairline);
+  padding-bottom: 0.4rem;
+}
+
+.sl-markdown-content h3 {
+  font-size: 1.2rem;
+  margin-top: 1.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.sl-markdown-content p {
+  margin-bottom: 1.25rem;
+}
+
+.sl-markdown-content code:not(pre code) {
+  border: 1px solid var(--sl-color-hairline);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  color: var(--cortex-shimmer);
+  background-color: var(--sl-color-bg-inline-code);
+  font-size: 0.88em;
+  font-family: var(--sl-font-mono) !important;
+}
+
+/* Code Blocks Styling (Always Crisp Monospace) */
+.expressive-code {
+  margin: 1.5rem 0;
+  border: 1px solid #2e2e2e;
+  border-radius: 6px;
+  overflow: hidden;
+  font-family: var(--sl-font-mono) !important;
+}
+
+/* ==========================================================================
+   Landing Page: Monospace Terminal Styling (JetBrains Mono & Space Mono)
+   ========================================================================== */
+
+.term-container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2.5rem 1rem 4rem;
+  font-family: var(--font-mono) !important;
+}
+
+.term-container * {
+  font-family: var(--font-mono);
+}
+
+/* Centered Minimalist Header Banner */
+.term-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  border-bottom: 1px dashed var(--sl-color-gray-5);
+  padding: 1.5rem 0 3rem;
+  margin-bottom: 2.5rem;
+}
+
+.huge-cortex-title {
+  font-family: 'Righteous', 'Bungee', cursive, sans-serif !important;
+  font-size: clamp(5.5rem, 18vw, 12.5rem);
+  font-weight: 900;
+  line-height: 0.95;
+  letter-spacing: 0.05em;
+  margin: 0 auto 1.75rem;
+  background: linear-gradient(135deg, #0284c7 0%, #38bdf8 38%, #7dd3fc 65%, #bae6fd 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: inline-block;
+  text-transform: uppercase;
+  text-align: center;
+  filter: drop-shadow(0 0 45px rgba(56, 189, 248, 0.4));
+  transition: filter 0.3s ease;
+}
+
+.huge-cortex-title:hover {
+  filter: drop-shadow(0 0 65px rgba(56, 189, 248, 0.65));
+}
+
+.term-subtitle {
+  font-size: 1.05rem;
+  color: var(--sl-color-gray-2);
+  margin: 0 auto 1.75rem;
+  max-width: 680px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.term-subtitle strong {
+  color: var(--cortex-shimmer);
+}
+
+/* Action Links */
+.term-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.75rem;
+}
+
+.term-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.1rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+  background: var(--cortex-blue);
+  color: #031326 !important;
+  text-decoration: none !important;
+  border-radius: 3px;
+  transition: opacity 0.15s ease, filter 0.15s ease;
+}
+
+.term-btn-primary:hover {
+  opacity: 0.92;
+  filter: brightness(1.08);
+}
+
+:root[data-theme='light'] .term-btn-primary {
+  color: #ffffff !important;
+}
+
+.term-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.1rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+  background: transparent;
+  color: var(--sl-color-gray-2) !important;
+  text-decoration: none !important;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 3px;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.term-btn-secondary:hover {
+  border-color: var(--cortex-blue);
+  color: var(--cortex-shimmer) !important;
+}
+
+/* Command Box (Ultra Minimal & Sharp) */
+.term-box {
+  background: #0d0d0d;
+  border: 1px solid #222222;
+  border-radius: 4px;
+  margin: 2rem 0;
+  overflow: hidden;
+}
+
+.term-box-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.85rem;
+  background: #171717;
+  border-bottom: 1px solid #222222;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--cortex-shimmer);
+  font-family: var(--font-term-heading) !important;
+}
+
+.term-box-body {
+  padding: 1rem 1.15rem;
+}
+
+.term-cmd-row {
+  margin-bottom: 1.25rem;
+}
+
+.term-cmd-row:last-child {
+  margin-bottom: 0;
+}
+
+.term-cmd-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--sl-color-gray-4);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.35rem;
+}
+
+.term-code {
+  background: #141414;
+  border: 1px solid #1f1f1f;
+  border-radius: 3px;
+  padding: 0.6rem 0.85rem;
+  font-size: 0.85rem;
+  color: #eeeeee;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+.term-prompt {
+  color: var(--cortex-blue);
+  user-select: none;
+  margin-right: 0.4rem;
+  font-weight: 700;
+}
+
+.term-comment {
+  color: #666666;
+  user-select: none;
+}
+
+/* Minimalist ASCII Invariants Card */
+.term-invariants {
+  border: 1px dashed #333333;
+  padding: 1.15rem;
+  border-radius: 4px;
+  margin: 2rem 0;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.term-invariants-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--cortex-blue);
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-term-heading) !important;
+}
+
+.term-invariants-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.term-invariants-list li {
+  font-size: 0.82rem;
+  color: var(--sl-color-gray-3);
+  line-height: 1.5;
+}
+
+.term-invariants-list li strong {
+  color: var(--sl-color-gray-1);
+}
+
+/* Quick Nav Row */
+.term-nav-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  border-top: 1px dashed var(--sl-color-gray-5);
+}
+
+.term-nav-tag {
+  font-size: 0.8rem;
+  color: var(--sl-color-gray-3);
+  text-decoration: none !important;
+  border: 1px solid #282828;
+  padding: 0.35rem 0.7rem;
+  border-radius: 3px;
+  transition: all 0.15s ease;
+}
+
+.term-nav-tag:hover {
+  border-color: var(--cortex-blue);
+  color: var(--cortex-shimmer) !important;
+  background: var(--cortex-glow);
+}
+
+/* Remove auto-generated duplicate white title from all pages and doc sections */
+.content-panel:has(#_top) {
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  overflow: hidden !important;
+}
+
+.content-panel:has(#_top) + .content-panel {
+  border-top: none !important;
+}
+
+#_top {
+  display: block !important;
+  height: 0 !important;
+  width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
