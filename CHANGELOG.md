@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### SQLite Startup & CI Reliability
+
+#### Fixed
+- Serialize schema inspection and migration writes in an immediate SQLite transaction so concurrent CLI startup cannot insert duplicate schema versions. Failed migrations roll back together, and schema-version read errors remain explicit.
+- Isolate team and workflow CLI tests from the user's Cortex data and cover simultaneous team-message commands on a fresh database.
+- Clear inherited provider credentials and endpoints in the unconfigured CLI test, and run the Integration workflow on pull requests before changes reach `main`.
+- Replace the README's fixed "CI passing" badge with live CI and integration status badges.
+- Build Docker container working-directory paths with POSIX separators on Windows hosts, retaining existing workspace containment checks.
+
 ### Benchmark Harness & Platform Compatibility
 
 #### Fixed

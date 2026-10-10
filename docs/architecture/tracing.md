@@ -25,6 +25,8 @@ Agent Execution Loop
 
 Database migrations are tracked in `schema_version` and executed within atomic transactions upon opening the store.
 
+Schema inspection and all pending migrations share one `BEGIN IMMEDIATE` transaction. Independent connections and CLI processes serialize before reading the version, so only one initializer applies each migration. SQLite's connection busy timeout bounds waiting for the writer lock; lock and version-read failures propagate as `CortexError::Internal`. A failed migration rolls back both schema changes and version records.
+
 ### `schema_version` Table
 
 | Column | Type | Description |

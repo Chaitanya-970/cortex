@@ -130,7 +130,13 @@ impl DockerSandbox {
             if rel.as_os_str().is_empty() {
                 "/workspace".to_string()
             } else {
-                format!("/workspace/{}", rel.display())
+                // The container uses POSIX separators even on a Windows host.
+                let container_relative = rel
+                    .components()
+                    .map(|component| component.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                format!("/workspace/{container_relative}")
             }
         } else {
             "/workspace".to_string()
