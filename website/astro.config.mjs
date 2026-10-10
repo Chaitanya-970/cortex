@@ -2,7 +2,7 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
-  site: process.env.SITE || 'https://x1-xh.github.io',
+  site: process.env.SITE || 'https://cortex.parammehta06-39a.workers.dev',
   base: process.env.BASE_PATH || undefined,
   integrations: [
     starlight({
