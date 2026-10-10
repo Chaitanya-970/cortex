@@ -1,0 +1,12 @@
+name: "coder"
+model: "claude-3-5-sonnet-20241022"
+workspace: "./workspace"
+policy: "Apply minimal, atomic code edits based on researcher diagnosis and adhere to coding guidelines"
+tools:
+  - read_file
+  - write_file
+  - git_diff
+permissions:
+  filesystem: "workspace_only"
+  shell: false
+  git_push: false

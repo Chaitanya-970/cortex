@@ -92,6 +92,26 @@ impl ModelProvider for BenchmarkBaselineProvider {
                     }),
                 )]));
             }
+            if context.task.contains("calculator.py") {
+                return Ok(ModelOutput::ToolCalls(vec![ToolCall::new(
+                    "fix_calculator",
+                    "write_file",
+                    json!({
+                        "path": "calculator.py",
+                        "content": "def add(a, b):\n    return a + b\n\ndef divide(a, b):\n    if b == 0:\n        return 0\n    return a / b\n"
+                    }),
+                )]));
+            }
+            if context.task.contains("utils.py") {
+                return Ok(ModelOutput::ToolCalls(vec![ToolCall::new(
+                    "fix_utils",
+                    "write_file",
+                    json!({
+                        "path": "utils.py",
+                        "content": "def slugify(text):\n    return text.lower().replace(' ', '-')\n\ndef truncate(text, length=10):\n    return text[:length] if len(text) > length else text\n"
+                    }),
+                )]));
+            }
         }
 
         Ok(ModelOutput::FinalAnswer(
@@ -106,13 +126,14 @@ pub fn get_suite_tasks(suite_name: &str) -> Vec<BenchmarkTask> {
         "coding" => coding_benchmark_suite(),
         "refactor" => refactor_benchmark_suite(),
         "cli" => cli_benchmark_suite(),
+        "multi-agent" => multi_agent_benchmark_suite(),
         _ => Vec::new(),
     }
 }
 
 /// Return all known benchmark suite names.
 pub fn available_suites() -> Vec<&'static str> {
-    vec!["coding", "refactor", "cli"]
+    vec!["coding", "refactor", "cli", "multi-agent"]
 }
 
 fn coding_benchmark_suite() -> Vec<BenchmarkTask> {
@@ -250,6 +271,47 @@ fn cli_benchmark_suite() -> Vec<BenchmarkTask> {
         .with_file(
             "test_cli.py",
             "from cli import parse_args\nassert parse_args(['--verbose'])['verbose'] is True\nassert parse_args([])['verbose'] is False\nprint('CLI tests passed.')\n",
+        ),
+    ]
+}
+
+fn multi_agent_benchmark_suite() -> Vec<BenchmarkTask> {
+    let py = crate::runner::detect_python();
+    vec![
+        // Multi-Agent Task 1: Bugfix and Review
+        BenchmarkTask::new(
+            "multi-01-bugfix-with-review",
+            "Multi-Agent Bugfix and Review",
+            "multi-agent",
+            "Manager assigns bugfix to coder, reviewer checks tests, coder fixes reviewer feedback, tests pass",
+            "Fix the division by zero error in calculator.py so test_calculator.py passes.",
+            format!("{py} test_calculator.py"),
+        )
+        .with_file(
+            "calculator.py",
+            "def add(a, b):\n    return a + b\n\ndef divide(a, b):\n    # bug: crashes on b == 0\n    return a / b\n",
+        )
+        .with_file(
+            "test_calculator.py",
+            "from calculator import add, divide\nassert add(2, 3) == 5\nassert divide(10, 2) == 5.0\nassert divide(5, 0) == 0\nprint('Calculator tests passed.')\n",
+        ),
+
+        // Multi-Agent Task 2: Parallel Research & Patch
+        BenchmarkTask::new(
+            "multi-02-parallel-research",
+            "Multi-Agent Parallel Research & Patch",
+            "multi-agent",
+            "Manager splits research into parallel components, combines findings, and outputs final verified patch",
+            "Implement slugify and truncate in utils.py so test_utils.py passes.",
+            format!("{py} test_utils.py"),
+        )
+        .with_file(
+            "utils.py",
+            "# missing implementations\ndef slugify(text):\n    pass\n\ndef truncate(text, length=10):\n    pass\n",
+        )
+        .with_file(
+            "test_utils.py",
+            "from utils import slugify, truncate\nassert slugify('Hello World') == 'hello-world'\nassert truncate('Supercalifragilistic', 5) == 'Super'\nassert truncate('Short', 10) == 'Short'\nprint('Utils tests passed.')\n",
         ),
     ]
 }

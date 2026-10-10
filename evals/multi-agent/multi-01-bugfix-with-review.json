@@ -1,0 +1,12 @@
+{
+  "id": "multi-01-bugfix-with-review",
+  "name": "Multi-Agent Bugfix and Review",
+  "suite": "multi-agent",
+  "description": "Manager assigns bugfix to coder, reviewer checks tests, coder fixes reviewer feedback, tests pass",
+  "prompt": "Fix the division by zero error in calculator.py so test_calculator.py passes.",
+  "verify_command": "python3 test_calculator.py",
+  "files": {
+    "calculator.py": "def add(a, b):\n    return a + b\n\ndef divide(a, b):\n    # bug: crashes on b == 0\n    return a / b\n",
+    "test_calculator.py": "from calculator import add, divide\nassert add(2, 3) == 5\nassert divide(10, 2) == 5.0\nassert divide(5, 0) == 0\nprint('Calculator tests passed.')\n"
+  }
+}

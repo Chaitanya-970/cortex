@@ -1,0 +1,11 @@
+name: "reviewer"
+model: "claude-3-5-sonnet-20241022"
+workspace: "./workspace"
+policy: "Inspect diffs, execute verification checks, enforce code quality, and provide review verdicts"
+tools:
+  - read_file
+  - git_diff
+permissions:
+  filesystem: "workspace_only"
+  shell: false
+  git_push: false

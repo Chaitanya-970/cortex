@@ -1,0 +1,11 @@
+name: "researcher"
+model: "claude-3-5-sonnet-20241022"
+workspace: "./workspace"
+policy: "Inspect codebase, diagnose test failures, and provide structured root-cause analysis"
+tools:
+  - read_file
+  - git_log
+permissions:
+  filesystem: "workspace_only"
+  shell: false
+  git_push: false

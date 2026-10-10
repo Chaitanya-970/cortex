@@ -1,0 +1,10 @@
+name: "manager"
+model: "claude-3-5-sonnet-20241022"
+workspace: "./workspace"
+policy: "Coordinate multi-agent task lifecycle, assign subtasks to specialist workers, and enforce stage criteria"
+tools:
+  - read_file
+permissions:
+  filesystem: "workspace_only"
+  shell: false
+  git_push: false

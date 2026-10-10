@@ -1,0 +1,12 @@
+{
+  "id": "multi-02-parallel-research",
+  "name": "Multi-Agent Parallel Research & Patch",
+  "suite": "multi-agent",
+  "description": "Manager splits research into parallel components, combines findings, and outputs final verified patch",
+  "prompt": "Implement slugify and truncate in utils.py so test_utils.py passes.",
+  "verify_command": "python3 test_utils.py",
+  "files": {
+    "utils.py": "# missing implementations\ndef slugify(text):\n    pass\n\ndef truncate(text, length=10):\n    pass\n",
+    "test_utils.py": "from utils import slugify, truncate\nassert slugify('Hello World') == 'hello-world'\nassert truncate('Supercalifragilistic', 5) == 'Super'\nassert truncate('Short', 10) == 'Short'\nprint('Utils tests passed.')\n"
+  }
+}

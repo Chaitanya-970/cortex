@@ -1,0 +1,33 @@
+version: "1"
+name: "code-review-team"
+description: "Hierarchical multi-agent team: research, code implementation, and peer review"
+
+agents:
+  - id: "manager"
+    manifest: "./agents/manager.yaml"
+    role: "coordinator"
+  - id: "researcher"
+    manifest: "./agents/researcher.yaml"
+    role: "researcher"
+  - id: "coder"
+    manifest: "./agents/coder.yaml"
+    role: "implementer"
+  - id: "reviewer"
+    manifest: "./agents/reviewer.yaml"
+    role: "evaluator"
+
+stages:
+  - id: "research"
+    agent: "researcher"
+    action: "Analyze workspace test failures and trace root-cause boundary bugs"
+    outputs: ["bug_analysis"]
+  - id: "implementation"
+    agent: "coder"
+    depends_on: ["research"]
+    action: "Apply minimal patch fixing bug per bug_analysis findings"
+    outputs: ["code_patch"]
+  - id: "review"
+    agent: "reviewer"
+    depends_on: ["implementation"]
+    action: "Review code_patch, verify test execution, and approve or request revisions"
+    max_iterations: 3
