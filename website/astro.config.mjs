@@ -2,7 +2,8 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
-  site: 'https://cortex-ai.github.io',
+  site: process.env.SITE || 'https://x1-xh.github.io',
+  base: process.env.BASE_PATH || undefined,
   integrations: [
     starlight({
       title: 'Cortex',
