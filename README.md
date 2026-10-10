@@ -1,7 +1,7 @@
 # Cortex
 
 <p align="center">
-  <strong>Open-source Rust runtime and terminal harness for autonomous AI workers</strong>
+  <strong>Terminal coding agent and execution harness</strong>
 </p>
 
 <p align="center">
@@ -16,63 +16,9 @@
   <img src="assets/cortex-tui.png" alt="Cortex Terminal Interface" width="850">
 </p>
 
-Cortex is an open-source Rust runtime and terminal harness for autonomous AI workers. It treats model output as untrusted proposal data: the runtime is the sole execution authority, enforcing deterministic workspace boundaries, sanitized environments, and append-only event tracing.
+Cortex is a terminal-native AI coding assistant and agent harness built in Rust. It runs in your terminal to inspect repositories, edit code, execute shell commands, fix errors, and run tests directly inside your workspace.
 
-Built natively for **Google Gemma 4**, open local models via Ollama, and frontier providers (Google AI Studio, Anthropic Claude, OpenAI).
-
----
-
-## Capabilities
-
-<table>
-<tr>
-  <td width="28%"><b>Terminal Control Plane</b></td>
-  <td>Interactive Ratatui TUI with streaming reasoning traces, multiline input, slash-command autocomplete, live diffs, and real-time token and cost telemetry.</td>
-</tr>
-<tr>
-  <td><b>Runtime Authority</b></td>
-  <td>Strict execution boundary. Models propose structured JSON tool calls; the runtime validates schemas, canonicalizes paths, scrubs credentials from child processes, and blocks destructive actions (like unauthorized <code>git push</code>).</td>
-</tr>
-<tr>
-  <td><b>Model Agnostic & Gemma 4</b></td>
-  <td>Run Google Gemma 4 (<code>gemma4:12b</code>, <code>codegemma</code>) fully offline via Ollama with zero API keys, or connect to Google AI Studio, Anthropic, and OpenAI. Switch models dynamically via <code>/model</code> with zero restart.</td>
-</tr>
-<tr>
-  <td><b>Multi-Agent Coordination</b></td>
-  <td>Directed acyclic graph (DAG) execution pipelines, message routing with mailboxes and dead-letter queues, supervisor-worker topologies, and real-time coordination streaming.</td>
-</tr>
-<tr>
-  <td><b>Append-Only Tracing</b></td>
-  <td>Every prompt, tool execution, and state change is persisted to SQLite in WAL mode (<code>~/.cortex/cortex.db</code>) with regex secret redaction and bit-exact deterministic replay.</td>
-</tr>
-<tr>
-  <td><b>Model Context Protocol</b></td>
-  <td>Native stdio and SSE Model Context Protocol (MCP) client to dynamically discover, register, and query external tools.</td>
-</tr>
-<tr>
-  <td><b>Background Scheduler</b></td>
-  <td>Tick-based cron scheduler supporting standard 5-field cron syntax, one-shot timers, and configurable overlap policies (<code>skip</code>, <code>queue</code>, <code>replace</code>).</td>
-</tr>
-<tr>
-  <td><b>Verifiable Benchmarks</b></td>
-  <td>Deterministic evaluation harness (<code>cortex bench</code>) to test coding and agent capabilities against reproducible ground truth.</td>
-</tr>
-</table>
-
----
-
-## Architecture
-
-<p align="center">
-  <img src="assets/architecture.png" alt="Cortex Architecture" width="750">
-</p>
-
-The runtime enforces an unidirectional execution boundary:
-
-- **Untrusted Model Layer**: Models propose structured JSON tool actions (Google Gemma 4, Ollama, Google AI Studio, Claude, OpenAI).
-- **Cortex Runtime Authority**: Intercepts proposals, validates schemas, canonicalizes workspace file paths, and sanitizes subprocess environments.
-- **Execution Engine**: Dispatches validated operations to boundary-checked filesystem tools, timeout-capped subprocess runners, and JSON-RPC MCP bridges.
-- **Persistence Layer**: Emits typed execution events to append-only SQLite storage in WAL mode (`~/.cortex/cortex.db`) with automatic regex secret redaction.
+Works offline with **Google Gemma 4** (`gemma4:12b`, `codegemma`) via Ollama with zero API keys, or connects to Google AI Studio, Anthropic Claude, and OpenAI.
 
 ---
 
