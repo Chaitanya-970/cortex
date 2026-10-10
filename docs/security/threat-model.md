@@ -51,12 +51,10 @@ Process groups and job objects support cleanup; they are not containment against
 malicious descendants that escape a group or spawn during Windows job attachment.
 Container isolation remains a separate security boundary.
 
-## Inter-Agent Boundaries
+## Inter-Agent Boundaries & Multi-Agent Threat Model
 
-- `AgentManager` and endpoint issuance are restricted to trusted host code.
-- Sender identity is bound to the issued `AgentEndpoint`; agents cannot forge senders.
-- Model text does not grant supervisor roles, assign workers, or expand permissions.
-- Delegating tasks cannot copy, elevate, or transfer capabilities to workers.
-- Receiving a message returns typed data; receipt does not execute tools.
-- Deserialized message envelopes carry no authentication or capability authority.
-- In-process coordination does not defend against malicious host code with manager access.
+- **Boundary Containment**: Delegating a task cannot grant capabilities the child worker lacks. Agent permissions are strictly bound to individual manifests (`AgentPermissions`); task delegation never copies, inherits, or expands capabilities across hierarchy boundaries.
+- **Privilege Escalation Prevention**: An agent cannot forge its `sender` identity in the message envelope. `AgentManager` binds sender identities exclusively through issued `AgentEndpoint` handles in trusted host code; deserialized envelopes cannot claim unverified authority.
+- **Prompt Injection Defense**: Inter-agent messages are treated as untrusted data inputs, never as runtime execution authority. Enqueued message payloads (`AgentMessagePayload`) do not trigger automatic tool dispatch or shell execution; all actions pass through runtime capability policies.
+- **Hierarchy Integrity**: Supervisor-worker relationships form a directed acyclic graph. Direct and transitive cycles (A → B → A) are rejected at configuration time. Rogue agents cannot delegate tasks to workers assigned to other supervisors.
+- **In-Process Scope**: Inter-agent messaging is an in-process runtime coordination abstraction; it does not isolate malicious host code with direct memory access to `AgentManager`.

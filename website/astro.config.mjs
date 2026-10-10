@@ -53,6 +53,7 @@ export default defineConfig({
             { label: 'Scheduler Engine', slug: 'architecture/scheduler' },
             { label: 'Tool Registry', slug: 'architecture/tools' },
             { label: 'Execution Tracing & SQLite', slug: 'architecture/tracing' },
+            { label: 'Multi-Agent Architecture', slug: 'architecture/multi-agent' },
           ],
         },
         {

@@ -149,3 +149,81 @@ let message = worker_endpoint.recv().await?;
 Payloads may contain up to 64 KiB of serialized JSON. The manager retains at most 4096 task correlations and 4096 undrained message events. Full buffers reject sends instead of silently overwriting messages or traces. Task IDs are unique within a run, including after completion. Once `finish_coordination_run` releases correlations, host code must never reuse that run ID.
 
 `drain_message_events()` returns redacted `InterAgentMessage` events in enqueue order. Host code wraps each event in an `EventRecord` using its existing per-run sequence allocator and writes it to `RunStore`; the manager does not persist traces automatically. An event confirms enqueueing, not processing or execution. Drain the buffer regularly. See [execution tracing](../architecture/tracing.md).
+
+---
+
+## Declarative Workflow Pipelines (`workflow.yaml`)
+
+In addition to programmatic Rust API usage, Cortex supports declarative multi-agent workflows defined via YAML manifests. Workflows orchestrate multiple specialist agents into directed acyclic graphs (DAGs) of execution stages.
+
+### Manifest Structure
+
+A standard `workflow.yaml` manifest defines the participating agents and execution stages:
+
+```yaml
+version: "1.0"
+name: code-review-team
+description: "Coordinated bugfix pipeline: research -> implementation -> review"
+
+agents:
+  - id: manager
+    manifest: agents/manager.yaml
+    role: supervisor
+  - id: researcher
+    manifest: agents/researcher.yaml
+    role: specialist
+  - id: coder
+    manifest: agents/coder.yaml
+    role: specialist
+  - id: reviewer
+    manifest: agents/reviewer.yaml
+    role: specialist
+
+stages:
+  - id: research
+    agent: researcher
+    instructions: "Analyze the failing test in tests/test_calc.py and determine root cause."
+    routing_key: team.research
+
+  - id: implementation
+    agent: coder
+    depends_on: [research]
+    instructions: "Implement fix in src/calc.py according to researcher findings."
+    routing_key: team.code
+
+  - id: review
+    agent: reviewer
+    depends_on: [implementation]
+    instructions: "Review the patch in src/calc.py and verify test suite passes."
+    routing_key: team.review
+```
+
+### Running Workflows via CLI
+
+Execute a declarative workflow using the Cortex CLI:
+
+```bash
+# Validate workflow manifest without execution
+cortex workflow validate --workflow workflow.yaml
+
+# Execute workflow in the current workspace
+cortex workflow run --workflow workflow.yaml --workspace ./workspace
+
+# Stream live multi-agent execution events in JSON
+cortex workflow run --workflow workflow.yaml --format json
+```
+
+---
+
+## Best Practices
+
+### 1. Supervisor Prompts
+- **Goal Decomposition**: Instruct the supervisor to break complex objectives into discrete, independently verifiable subtasks before delegation.
+- **Strict Output Schemas**: Require workers to return typed or structured JSON outputs rather than free-form conversation, reducing parsing ambiguities.
+- **Deterministic Delegation Contracts**: Define clear acceptance criteria for each subtask so the supervisor can definitively evaluate whether a stage succeeded.
+
+### 2. Worker Tool Scoping & Least Privilege
+- **Read-Only Specialists**: Research and exploration agents (`researcher`, `auditor`) should be configured with read-only permissions (`AgentPermissions::read_only()`), granting access to search and view files without mutation capabilities.
+- **Scoped Mutators**: Coding agents (`coder`) should have write access strictly restricted to the project workspace (`AgentPermissions::standard()`), never the broader host filesystem.
+- **Isolated Reviewers**: Verification agents (`reviewer`) should have permission to run tests via execution sandboxes, but should not possess credentials or network capabilities.
+- **Zero Capability Inheritance**: Never rely on prompt instructions to enforce worker boundaries; configure permissions explicitly in each agent's manifest.

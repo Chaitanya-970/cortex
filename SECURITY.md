@@ -68,15 +68,15 @@ Cortex employs defense-in-depth through containerized and operating-system-level
 
 ---
 
-## 4. Inter-Agent Communication Boundaries
+## 4. Inter-Agent Communication Boundaries & Threat Model
 
 Cortex provides in-process messaging and supervisor/worker task delegation through `AgentManager` and `AgentEndpoint`:
 
+- **Boundary Containment**: Delegating a task cannot grant capabilities the child worker lacks. Permissions are configured statically per agent manifest (`AgentPermissions`); task delegation never copies, inherits, or expands capabilities across hierarchy boundaries.
+- **Privilege Escalation Prevention**: An agent cannot forge its `sender` identity in the message envelope. `AgentManager` establishes and validates sender identities exclusively through issued `AgentEndpoint` handles in trusted host code; deserialized envelopes cannot claim unverified authority.
+- **Prompt Injection Defense**: Inter-agent messages are treated as untrusted data inputs, never as runtime execution authority. Receiving a message (`AgentMessagePayload`) enqueues data in an inbox; receipt does not execute tools, bypass validation, or perform side effects. All execution actions pass through runtime capability policies.
 - **Trusted Host Authority**: Access to `AgentManager` (registration, endpoint issuance, worker assignment, and run completion) remains strictly in trusted host code. Model outputs cannot access the manager or issue endpoints.
-- **Endpoint-Bound Sender Identity**: Senders cannot forge identity; each `AgentEndpoint` strictly stamps the authenticated `AgentId` of the sending agent upon enqueueing.
-- **Model Output Separation**: Model-generated text cannot grant supervisor roles, assign workers, or expand permissions.
-- **No Capability Transfer**: Delegating a task does not copy, elevate, or transfer permissions from supervisor to worker. Host execution must still use existing tool permission and workspace checks.
-- **No Automatic Tool Execution**: Messages carry typed data. Receiving an `AgentMessage` or `TaskRequest` does not execute tools or perform external side effects.
+- **Hierarchy Integrity**: Supervisor-worker relationships form a directed acyclic graph. Direct and transitive cycles (A → B → A) are rejected at assignment time, preventing delegation deadlocks.
 - **Envelope Deserialization**: Deserializing a message envelope creates data, not authority or verified identity. Envelopes carry no cryptographic authentication.
 - **In-Process Boundary Scope**: Inter-agent messaging is an in-process runtime coordination abstraction; it does not isolate malicious host code with direct memory access to `AgentManager`.
 
