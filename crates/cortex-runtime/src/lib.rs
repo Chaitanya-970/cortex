@@ -25,8 +25,10 @@ pub use agent::{
     Agent, AgentCapability, AgentContext, AgentDescriptor, AgentEndpoint, AgentLifecycleEvent,
     AgentLoop, AgentManager, AgentManifest, AgentMessage, AgentMessagePayload, AgentModelConfig,
     AgentPermissions, AgentRegistry, AgentRunResult, AgentState, AgentYamlManifest, AgentYamlModel,
-    AgentYamlPermissions, CancellationToken, ChatMessage, PermissionState, RoutingKey,
-    SessionMetadata, TodoItem, YamlPermissionValue, CODING_AGENT_POLICY,
+    AgentYamlPermissions, BusMessage, CancellationToken, ChatMessage, DeadLetterEnvelope,
+    DeadLetterReason, MessageBus, MessageType, PermissionState, RoutingKey, SessionMetadata,
+    TaskPriority, TaskQueue, TaskStatus, TodoItem, WorkflowCoordinator, WorkflowTask,
+    YamlPermissionValue, CODING_AGENT_POLICY,
 };
 pub use mcp::{CortexConfig, McpClient, McpConfig, McpManager, McpServerConfig, McpTool};
 pub use model::{
@@ -36,7 +38,10 @@ pub use model::{
 pub use providers::{
     create_model_provider, estimate_cost, AnthropicProvider, OpenAiCompatibleProvider,
 };
-pub use sandbox::{Sandbox, SandboxMode};
+pub use sandbox::{
+    DockerSandbox, DockerSandboxConfig, HostSandbox, NetworkIsolationPolicy, Sandbox,
+    SandboxExecutionResult, SandboxMode,
+};
 pub use scheduler::{
     CronExpression, CronField, CronParseError, JobRunRecord, JobRunStatus, JobStatus,
     OverlapPolicy, Schedule, ScheduledJob, SchedulerEngine, TriggerResult,
