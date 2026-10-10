@@ -148,6 +148,55 @@ impl From<String> for SessionId {
     }
 }
 
+/// Strongly typed identifier for a multi-agent workflow.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct WorkflowId(String);
+
+static WORKFLOW_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+impl WorkflowId {
+    /// Create a new [`WorkflowId`] from a string.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// Generate a unique [`WorkflowId`] based on current timestamp and atomic counter.
+    pub fn generate() -> Self {
+        let ts = chrono::Utc::now().timestamp_micros();
+        let cnt = WORKFLOW_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self(format!("workflow_{}_{:04x}", ts, cnt & 0xffff))
+    }
+
+    /// Access the underlying string representation.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for WorkflowId {
+    fn default() -> Self {
+        Self::generate()
+    }
+}
+
+impl fmt::Display for WorkflowId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<&str> for WorkflowId {
+    fn from(s: &str) -> Self {
+        Self::new(s)
+    }
+}
+
+impl From<String> for WorkflowId {
+    fn from(s: String) -> Self {
+        Self::new(s)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,5 +214,10 @@ mod tests {
         let session_id = SessionId::from("session-abc");
         assert_eq!(session_id.as_str(), "session-abc");
         assert_eq!(session_id.to_string(), "session-abc");
+
+        let workflow_id = WorkflowId::from("workflow-refactor");
+        assert_eq!(workflow_id.as_str(), "workflow-refactor");
+        assert_eq!(workflow_id.to_string(), "workflow-refactor");
+        assert!(WorkflowId::generate().as_str().starts_with("workflow_"));
     }
 }
