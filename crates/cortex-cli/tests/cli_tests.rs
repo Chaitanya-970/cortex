@@ -373,7 +373,6 @@ fn test_cli_cron_lifecycle() {
     assert!(stdout.contains("Name:         Nightly Backup"));
     assert!(stdout.contains("Schedule:     0 2 * * *"));
     assert!(stdout.contains("Overlap:      queue"));
-    assert!(stdout.contains("Target Agent: default"));
     assert!(stdout.contains("Status:       active"));
     assert!(stdout.contains("Total Runs:   0"));
     assert!(stdout.contains("Successes:    0"));
@@ -408,7 +407,6 @@ fn test_cli_cron_lifecycle() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(&format!("\"id\": \"{}\"", job_id)));
-    assert!(stdout.contains("\"target_agent\": \"default\""));
     assert!(stdout.contains("\"total_runs\": 0"));
 
     // 8. History initially empty
@@ -522,7 +520,7 @@ fn test_cli_cron_lifecycle() {
 
     assert!(!output.status.success());
 
-    // 6. Delete job
+    // 14. Delete job
     let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
         .args(["cron", "delete", job_id, "--db", db_path.to_str().unwrap()])
         .output()
@@ -532,7 +530,7 @@ fn test_cli_cron_lifecycle() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(&format!("Deleted cron job '{}'", job_id)));
 
-    // 7. Verify empty again
+    // 15. Verify empty again
     let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
         .args(["cron", "list", "--db", db_path.to_str().unwrap()])
         .output()
@@ -541,6 +539,106 @@ fn test_cli_cron_lifecycle() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("No scheduled cron jobs found"));
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_cli_cron_once_schedule() {
+    let tmp_dir = std::env::temp_dir().join(format!("cortex_cli_cron_once_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let db_path = tmp_dir.join("cortex.db");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args([
+            "cron",
+            "create",
+            "--name",
+            "Deployment Check",
+            "--schedule",
+            "@once 2026-10-15T15:30:00Z",
+            "--prompt",
+            "Verify canary deployment status",
+            "--db",
+            db_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to execute cortex cron create");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Created cron job"));
+    assert!(stdout.contains("Deployment Check"));
+
+    let job_id_start = stdout.find('\'').unwrap() + 1;
+    let job_id_end = stdout[job_id_start..].find('\'').unwrap() + job_id_start;
+    let job_id = &stdout[job_id_start..job_id_end];
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["cron", "inspect", job_id, "--db", db_path.to_str().unwrap()])
+        .output()
+        .expect("Failed to execute cortex cron inspect");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Name:         Deployment Check"));
+    assert!(stdout.contains("Schedule:     @once 2026-10-15T15:30:00Z"));
+    assert!(stdout.contains("Prompt:       Verify canary deployment status"));
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_cli_cron_ambiguous_prefix() {
+    let tmp_dir =
+        std::env::temp_dir().join(format!("cortex_cli_cron_ambig_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let db_path = tmp_dir.join("cortex.db");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args([
+            "cron",
+            "create",
+            "--name",
+            "Job A",
+            "--schedule",
+            "0 1 * * *",
+            "--prompt",
+            "Task A",
+            "--db",
+            db_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to execute cortex cron create");
+    assert!(output.status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args([
+            "cron",
+            "create",
+            "--name",
+            "Job B",
+            "--schedule",
+            "0 2 * * *",
+            "--prompt",
+            "Task B",
+            "--db",
+            db_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("Failed to execute cortex cron create");
+    assert!(output.status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["cron", "inspect", "job_", "--db", db_path.to_str().unwrap()])
+        .output()
+        .expect("Failed to execute cortex cron inspect");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("ambiguous cron job prefix 'job_'"));
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }

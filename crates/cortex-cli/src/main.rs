@@ -387,10 +387,6 @@ enum CronCommands {
         #[arg(short, long, alias = "task")]
         prompt: String,
 
-        /// Target agent name (e.g., coding, monitor).
-        #[arg(short, long)]
-        agent: Option<String>,
-
         /// Overlap policy when previous run is active: skip, queue, or replace.
         #[arg(short, long, default_value = "skip")]
         overlap: String,
@@ -857,6 +853,15 @@ fn run_bench(
     Ok(())
 }
 
+fn open_scheduler_engine(db: Option<PathBuf>) -> SchedulerEngine {
+    let db_path = db.unwrap_or_else(default_db_path);
+    let store = Arc::new(RunStore::open(&db_path).unwrap_or_else(|e| {
+        eprintln!("Error opening database: {}", e);
+        std::process::exit(1);
+    }));
+    SchedulerEngine::new(store)
+}
+
 fn handle_cron_list(
     engine: &SchedulerEngine,
     json: bool,
@@ -956,14 +961,9 @@ fn handle_cron_delete(
         }
     };
 
-    let deleted = engine.delete_job(&job.id)?;
-    if deleted {
-        println!("Deleted cron job '{}'.", job.id);
-        Ok(())
-    } else {
-        eprintln!("Error: Cron job '{}' not found.", id);
-        std::process::exit(1);
-    }
+    engine.delete_job(&job.id)?;
+    println!("Deleted cron job '{}'.", job.id);
+    Ok(())
 }
 
 fn handle_cron_inspect(
@@ -984,7 +984,6 @@ fn handle_cron_inspect(
     };
 
     let stats = engine.get_job_stats(&job.id)?;
-    let target_agent = "default";
 
     if json {
         let val = serde_json::json!({
@@ -993,7 +992,6 @@ fn handle_cron_inspect(
             "schedule": job.schedule,
             "prompt": job.prompt,
             "overlap_policy": job.overlap_policy.as_str(),
-            "target_agent": target_agent,
             "status": job.status.as_str(),
             "next_run_at": job.next_run_at.map(|dt| dt.to_rfc3339()),
             "last_run_at": job.last_run_at.map(|dt| dt.to_rfc3339()),
@@ -1020,7 +1018,6 @@ fn handle_cron_inspect(
     println!("Name:         {}", job.name);
     println!("Schedule:     {}", job.schedule);
     println!("Overlap:      {}", job.overlap_policy);
-    println!("Target Agent: {}", target_agent);
     println!("Status:       {}", job.status);
     println!("Next Run:     {}", next_str);
     println!("Last Run:     {}", last_str);
@@ -1066,7 +1063,7 @@ fn handle_cron_history(
         "{:<28} {:<24} {:<10} {:<12} ERROR SUMMARY",
         "RUN ID", "TRIGGER TIME", "DURATION", "STATUS"
     );
-    println!("{:-<95}", "");
+    println!("{:-<120}", "");
 
     for run in runs {
         let trigger_str = run.started_at.to_rfc3339();
@@ -1675,15 +1672,7 @@ fn main() {
         }
         Some(Commands::Cron { action }) => match action {
             CronCommands::List { db, json } => {
-                let db_path = db.unwrap_or_else(default_db_path);
-                let store = Arc::new(match RunStore::open(&db_path) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!("Error opening database: {}", e);
-                        std::process::exit(1);
-                    }
-                });
-                let engine = SchedulerEngine::new(store);
+                let engine = open_scheduler_engine(db);
                 if let Err(e) = handle_cron_list(&engine, json) {
                     eprintln!("Error listing cron jobs: {}", e);
                     std::process::exit(1);
@@ -1693,49 +1682,24 @@ fn main() {
                 name,
                 schedule,
                 prompt,
-                agent: _,
                 overlap,
                 db,
             } => {
-                let db_path = db.unwrap_or_else(default_db_path);
-                let store = Arc::new(match RunStore::open(&db_path) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!("Error opening database: {}", e);
-                        std::process::exit(1);
-                    }
-                });
-                let engine = SchedulerEngine::new(store);
+                let engine = open_scheduler_engine(db);
                 if let Err(e) = handle_cron_create(&engine, name, &schedule, &prompt, &overlap) {
                     eprintln!("Error creating cron job: {}", e);
                     std::process::exit(1);
                 }
             }
             CronCommands::Delete { id, db } => {
-                let db_path = db.unwrap_or_else(default_db_path);
-                let store = Arc::new(match RunStore::open(&db_path) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!("Error opening database: {}", e);
-                        std::process::exit(1);
-                    }
-                });
-                let engine = SchedulerEngine::new(store);
+                let engine = open_scheduler_engine(db);
                 if let Err(e) = handle_cron_delete(&engine, &id) {
                     eprintln!("Error deleting cron job: {}", e);
                     std::process::exit(1);
                 }
             }
             CronCommands::Inspect { id, json, db } => {
-                let db_path = db.unwrap_or_else(default_db_path);
-                let store = Arc::new(match RunStore::open(&db_path) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!("Error opening database: {}", e);
-                        std::process::exit(1);
-                    }
-                });
-                let engine = SchedulerEngine::new(store);
+                let engine = open_scheduler_engine(db);
                 if let Err(e) = handle_cron_inspect(&engine, &id, json) {
                     eprintln!("Error inspecting cron job: {}", e);
                     std::process::exit(1);
@@ -1747,15 +1711,7 @@ fn main() {
                 json,
                 db,
             } => {
-                let db_path = db.unwrap_or_else(default_db_path);
-                let store = Arc::new(match RunStore::open(&db_path) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!("Error opening database: {}", e);
-                        std::process::exit(1);
-                    }
-                });
-                let engine = SchedulerEngine::new(store);
+                let engine = open_scheduler_engine(db);
                 if let Err(e) = handle_cron_history(&engine, &id, limit, json) {
                     eprintln!("Error retrieving cron job history: {}", e);
                     std::process::exit(1);

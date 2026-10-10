@@ -44,7 +44,6 @@ Job ID:       job_01j7abc...
 Name:         GitHub Monitor
 Schedule:     */30 * * * *
 Overlap:      skip
-Target Agent: default
 Status:       active
 Next Run:     2026-10-15T16:00:00Z
 Last Run:     2026-10-15T15:30:00Z
