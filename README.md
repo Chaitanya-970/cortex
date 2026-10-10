@@ -22,6 +22,14 @@ Works offline with **Google Gemma 4** (`gemma4:12b`, `codegemma`) via Ollama wit
 
 ---
 
+## Architecture
+
+<p align="center">
+  <img src="assets/architecture.png" alt="Cortex Architecture" width="750">
+</p>
+
+---
+
 ## Installation
 
 ### Prerequisites
