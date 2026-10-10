@@ -247,7 +247,7 @@ workspace: "./src"
 fn test_database_schema_v2_migration() {
     let store = RunStore::in_memory().expect("open in-memory store");
     assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
-    assert_eq!(store.schema_version().unwrap(), 2);
+    assert!(store.schema_version().unwrap() >= 2);
 
     // Verify agents and agent_checkpoints tables are queryable
     let agents = store.list_agents().expect("list agents on fresh DB");

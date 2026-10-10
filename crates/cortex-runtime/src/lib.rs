@@ -41,7 +41,7 @@ pub use scheduler::{
     CronExpression, CronField, CronParseError, JobRunRecord, JobRunStatus, JobStatus,
     OverlapPolicy, Schedule, ScheduledJob, SchedulerEngine, TriggerResult,
 };
-pub use storage::{AgentCheckpointRecord, AgentRecord, RunStore, RunSummary};
+pub use storage::{AgentCheckpointRecord, AgentRecord, RunStore, RunSummary, SecretRedactor};
 pub use tool::{validate_schema, PermissionLevel, Tool, ToolDefinition, ToolRegistry, ToolResult};
 pub use workflow::{
     WorkflowAgentRef, WorkflowManifest, WorkflowManifestExt, WorkflowStage, WorkflowYamlParser,
