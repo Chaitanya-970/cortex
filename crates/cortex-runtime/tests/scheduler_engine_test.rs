@@ -10,6 +10,14 @@ use cortex_runtime::scheduler::{
 use cortex_runtime::storage::RunStore;
 use std::sync::Arc;
 
+struct TempDirGuard(std::path::PathBuf);
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn test_cron_parsing_comprehensive() {
     // 5-field standard expressions
@@ -70,6 +78,7 @@ fn test_sqlite_persistence_across_restarts() {
     let tmp_dir =
         std::env::temp_dir().join(format!("cortex_cron_persist_test_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp_dir);
+    let _guard = TempDirGuard(tmp_dir.clone());
     let db_path = tmp_dir.join("cortex_cron.db");
 
     let job_id: JobId;
@@ -124,8 +133,6 @@ fn test_sqlite_persistence_across_restarts() {
         assert_eq!(runs[0].status, JobRunStatus::Completed);
         assert_eq!(runs[0].output.as_deref(), Some("Cleaned 45 files"));
     }
-
-    let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
 #[test]
@@ -264,6 +271,7 @@ fn test_downtime_recovery_skip_policy() {
     let tmp_dir =
         std::env::temp_dir().join(format!("cortex_cron_downtime_skip_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp_dir);
+    let _guard = TempDirGuard(tmp_dir.clone());
     let db_path = tmp_dir.join("cortex_downtime.db");
 
     let job_id: JobId;
@@ -331,12 +339,10 @@ fn test_downtime_recovery_skip_policy() {
         assert_eq!(runs.len(), 2);
         assert!(runs.iter().all(|r| r.status == JobRunStatus::Completed));
     }
-
-    let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
 #[test]
-fn test_downtime_recovery_queue_policy_catchup() {
+fn test_queue_policy_multi_trigger_drain_with_failure_recovery() {
     let store = Arc::new(RunStore::in_memory().unwrap());
     let engine = SchedulerEngine::new(store);
 
@@ -379,11 +385,17 @@ fn test_downtime_recovery_queue_policy_catchup() {
         _ => panic!("expected started run 2"),
     };
 
-    // Finish run 2: starts run 3 automatically
+    // Finish run 2 as Failed: error message is recorded and starts run 3 automatically
     let run_3_res = engine
-        .finish_job_run(&run_2, &job.id, JobRunStatus::Completed, None, None)
+        .finish_job_run(
+            &run_2,
+            &job.id,
+            JobRunStatus::Failed,
+            None,
+            Some("Task process crashed with exit code 1".into()),
+        )
         .unwrap()
-        .expect("must start queued run 3");
+        .expect("must start queued run 3 even when previous run failed");
 
     let run_3 = match run_3_res {
         TriggerResult::Started { run_id, .. } => run_id,
@@ -398,7 +410,73 @@ fn test_downtime_recovery_queue_policy_catchup() {
 
     let runs = engine.list_job_runs(&job.id, 10).unwrap();
     assert_eq!(runs.len(), 3);
-    assert!(runs.iter().all(|r| r.status == JobRunStatus::Completed));
+
+    let rec_1 = runs.iter().find(|r| r.id == run_1).unwrap();
+    assert_eq!(rec_1.status, JobRunStatus::Completed);
+
+    let rec_2 = runs.iter().find(|r| r.id == run_2).unwrap();
+    assert_eq!(rec_2.status, JobRunStatus::Failed);
+    assert_eq!(
+        rec_2.error.as_deref(),
+        Some("Task process crashed with exit code 1")
+    );
+
+    let rec_3 = runs.iter().find(|r| r.id == run_3).unwrap();
+    assert_eq!(rec_3.status, JobRunStatus::Completed);
+}
+
+#[test]
+fn test_pause_and_resume_job_lifecycle_and_restart() {
+    let tmp_dir =
+        std::env::temp_dir().join(format!("cortex_cron_pause_resume_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    let _guard = TempDirGuard(tmp_dir.clone());
+    let db_path = tmp_dir.join("cortex_pause.db");
+
+    let job_id: JobId;
+    let t0 = Utc.with_ymd_and_hms(2026, 10, 10, 10, 0, 0).unwrap();
+
+    // Phase 1: Register job, pause it, verify tick does not trigger
+    {
+        let store = Arc::new(RunStore::open(&db_path).unwrap());
+        let engine = SchedulerEngine::new(store);
+
+        let job = engine
+            .register_job("Pausable Job", "*/5 * * * *", "Prompt", OverlapPolicy::Skip)
+            .unwrap();
+        job_id = job.id.clone();
+
+        assert!(engine.pause_job(&job_id).unwrap());
+        let paused_job = engine.get_job(&job_id).unwrap().unwrap();
+        assert_eq!(paused_job.status, JobStatus::Paused);
+
+        // Tick at due time does NOT trigger paused job
+        let triggered = engine.tick(t0 + Duration::minutes(10)).unwrap();
+        assert!(triggered.is_empty());
+    }
+
+    // Phase 2: Reopen store after restart, verify status persists as Paused, then resume
+    {
+        let store = Arc::new(RunStore::open(&db_path).unwrap());
+        let engine = SchedulerEngine::new(store);
+
+        let job = engine.get_job(&job_id).unwrap().unwrap();
+        assert_eq!(job.status, JobStatus::Paused);
+
+        let triggered = engine.tick(t0 + Duration::minutes(20)).unwrap();
+        assert!(triggered.is_empty());
+
+        assert!(engine.resume_job(&job_id).unwrap());
+        let resumed = engine.get_job(&job_id).unwrap().unwrap();
+        assert_eq!(resumed.status, JobStatus::Active);
+        assert!(resumed.next_run_at.is_some());
+
+        // Now tick triggers active job
+        let due_time = resumed.next_run_at.unwrap();
+        let triggered_after = engine.tick(due_time).unwrap();
+        assert_eq!(triggered_after.len(), 1);
+        assert!(matches!(triggered_after[0], TriggerResult::Started { .. }));
+    }
 }
 
 #[test]
@@ -437,9 +515,11 @@ fn test_cancellation_and_deletion_of_active_jobs() {
     let runs = engine.list_job_runs(&job.id, 10).unwrap();
     assert!(runs.is_empty());
 
-    // Completing orphaned run does not panic
-    let result = engine.finish_job_run(&run_id, &job.id, JobRunStatus::Completed, None, None);
-    assert!(result.is_ok());
+    // Completing orphaned run does not panic and returns no next trigger
+    let result = engine
+        .finish_job_run(&run_id, &job.id, JobRunStatus::Completed, None, None)
+        .unwrap();
+    assert_eq!(result, None);
 }
 
 #[test]

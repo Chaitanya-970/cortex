@@ -59,7 +59,7 @@ When the Cortex process is offline across multiple scheduled intervals, the engi
 ## Cancellation and deletion behavior
 
 - Deletion during active runs: When `engine.delete_job(id)` is called, the job is removed from `cron_jobs`, all associated run records in `cron_job_runs` are removed via database cascade, and any queued trigger counters are evicted from memory. Orphaned runs that complete after job deletion are handled gracefully without panics.
-- Replacement cancellation: When `OverlapPolicy::Replace` cancels an active execution, the cancelled run is recorded with `JobRunStatus::Cancelled` and an explicit error explanation in SQLite. Child processes and pending tasks are aborted before the replacement run starts.
+- Replacement cancellation: When `OverlapPolicy::Replace` cancels an active execution, the cancelled run is recorded with `JobRunStatus::Cancelled` and an explicit error explanation in SQLite before the replacement run starts.
 
 ## Timezone and calendar boundary transitions
 
