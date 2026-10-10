@@ -7,7 +7,8 @@
 <p align="center">
   <a href="https://github.com/x1-xh/cortex/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.75%2B-orange.svg" alt="Rust: 1.75+"></a>
-  <a href="https://github.com/x1-xh/cortex/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen.svg" alt="Build Status"></a>
+  <a href="https://github.com/x1-xh/cortex/actions/workflows/pull-request.yml"><img src="https://github.com/x1-xh/cortex/actions/workflows/pull-request.yml/badge.svg?branch=main" alt="CI status"></a>
+  <a href="https://github.com/x1-xh/cortex/actions/workflows/integration.yml"><img src="https://github.com/x1-xh/cortex/actions/workflows/integration.yml/badge.svg?branch=main" alt="Integration test status"></a>
   <a href="https://cortex-ai.github.io"><img src="https://img.shields.io/badge/Docs-cortex--ai.github.io-0284c7.svg" alt="Documentation"></a>
 </p>
 

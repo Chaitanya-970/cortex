@@ -2,6 +2,29 @@
 
 use std::process::Command;
 
+fn isolated_cli(home: &std::path::Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_cortex"));
+    command
+        .env("CORTEX_HOME", home)
+        .env("CORTEX_DB_PATH", home.join("cortex.db"))
+        .env("CORTEX_AGENTS_PATH", home.join("agents.json"));
+    command
+}
+
+fn cli_test_home(name: &str) -> std::path::PathBuf {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let home = std::env::temp_dir().join(format!(
+        "cortex_cli_{name}_{}_{}",
+        std::process::id(),
+        nonce
+    ));
+    std::fs::create_dir_all(&home).unwrap();
+    home
+}
+
 #[test]
 fn test_cli_version_flag() {
     let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
@@ -234,26 +257,38 @@ fn test_cli_run_help() {
 
 #[test]
 fn test_cli_run_unconfigured_error_guidance() {
-    let tmp_dir =
-        std::env::temp_dir().join(format!("cortex_unconfigured_test_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-    std::fs::create_dir_all(&tmp_dir).unwrap();
-
-    let output = Command::new(env!("CARGO_BIN_EXE_cortex"))
-        .env("CORTEX_HOME", &tmp_dir)
-        .env_remove("OPENAI_API_KEY")
-        .env_remove("ANTHROPIC_API_KEY")
-        .env_remove("CORTEX_API_KEY")
+    let tmp_dir = cli_test_home("unconfigured");
+    let mut command = isolated_cli(&tmp_dir);
+    // Clear every provider-factory fallback, including lowercase Unix aliases.
+    // The unconfigured case must never inherit credentials or contact a server.
+    for variable in [
+        "OPENAI_API_KEY",
+        "openai_api_key",
+        "ANTHROPIC_API_KEY",
+        "anthropic_api_key",
+        "GEMINI_API_KEY",
+        "gemini_api_key",
+        "CORTEX_API_KEY",
+        "CORTEX_BASE_URL",
+        "OPENAI_API_BASE",
+        "openai_api_base",
+        "CORTEX_API_BASE",
+        "cortex_api_base",
+    ] {
+        command.env_remove(variable);
+    }
+    let output = command
+        .current_dir(&tmp_dir)
         .args(["run", "Inspect codebase", "--model", "gpt-4o"])
         .output()
         .expect("Failed to execute cortex run");
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("not configured"));
+    assert!(stderr.contains("not configured"), "{stderr}");
     assert!(stderr.contains("OPENAI_API_KEY"));
 
-    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::remove_dir_all(&tmp_dir).unwrap();
 }
 
 #[test]
@@ -595,8 +630,9 @@ fn test_cli_agent_errors() {
 
 #[test]
 fn test_cli_workflow_commands() {
+    let tmp_dir = cli_test_home("workflow");
     // 1. cortex workflow --help
-    let help = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let help = isolated_cli(&tmp_dir)
         .args(["workflow", "--help"])
         .output()
         .expect("Failed to execute cortex workflow --help");
@@ -605,10 +641,6 @@ fn test_cli_workflow_commands() {
     assert!(stdout.contains("Manage and execute declarative multi-agent workflows"));
 
     // 2. cortex workflow run on temporary manifest
-    let tmp_dir = std::env::temp_dir().join(format!("cortex_cli_wf_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp_dir);
-    std::fs::create_dir_all(&tmp_dir).unwrap();
-
     let wf_file = tmp_dir.join("workflow.yaml");
     std::fs::write(
         &wf_file,
@@ -635,7 +667,7 @@ stages:
     )
     .unwrap();
 
-    let run_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let run_out = isolated_cli(&tmp_dir)
         .args(["workflow", "run", wf_file.to_str().unwrap(), "--json"])
         .output()
         .expect("Failed to run cortex workflow");
@@ -647,7 +679,7 @@ stages:
     assert_eq!(run_json["status"], "completed");
 
     // 3. cortex workflow status
-    let status_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let status_out = isolated_cli(&tmp_dir)
         .args(["workflow", "status", "test-wf", "--json"])
         .output()
         .expect("Failed to run cortex workflow status");
@@ -661,8 +693,9 @@ stages:
 
 #[test]
 fn test_cli_team_commands() {
+    let tmp_dir = cli_test_home("team");
     // 1. cortex team --help
-    let help = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let help = isolated_cli(&tmp_dir)
         .args(["team", "--help"])
         .output()
         .expect("Failed to execute cortex team --help");
@@ -671,7 +704,7 @@ fn test_cli_team_commands() {
     assert!(stdout.contains("Manage multi-agent teams and inspect inter-agent communications"));
 
     // 2. cortex team list --json
-    let list_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let list_out = isolated_cli(&tmp_dir)
         .args(["team", "list", "--json"])
         .output()
         .expect("Failed to execute cortex team list");
@@ -681,12 +714,47 @@ fn test_cli_team_commands() {
     assert!(list_json.get("team_size").is_some());
 
     // 3. cortex team messages
-    let msgs_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+    let msgs_out = isolated_cli(&tmp_dir)
         .args(["team", "messages", "run-nonexistent", "--json"])
         .output()
         .expect("Failed to execute cortex team messages");
-    assert!(msgs_out.status.success());
+    assert!(
+        msgs_out.status.success(),
+        "team messages failed: {}",
+        String::from_utf8_lossy(&msgs_out.stderr)
+    );
     let msgs_json: serde_json::Value =
         serde_json::from_slice(&msgs_out.stdout).expect("valid json output");
     assert!(msgs_json.is_array());
+    assert_eq!(msgs_json, serde_json::json!([]));
+    std::fs::remove_dir_all(&tmp_dir).unwrap();
+}
+
+#[test]
+fn test_cli_team_messages_concurrent_initialization() {
+    let tmp_dir = cli_test_home("concurrent_team");
+    let children: Vec<_> = (0..8)
+        .map(|_| {
+            isolated_cli(&tmp_dir)
+                .args(["team", "messages", "run-nonexistent", "--json"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("Failed to execute cortex team messages")
+        })
+        .collect();
+    let outputs: Vec<_> = children
+        .into_iter()
+        .map(|child| child.wait_with_output().unwrap())
+        .collect();
+    std::fs::remove_dir_all(&tmp_dir).unwrap();
+    for output in outputs {
+        assert!(
+            output.status.success(),
+            "concurrent team messages failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let messages: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(messages, serde_json::json!([]));
+    }
 }

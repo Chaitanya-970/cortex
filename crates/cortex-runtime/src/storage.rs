@@ -10,7 +10,7 @@ use cortex_core::{AgentId, CortexError, EventRecord, JobId, Redactor, Result, Ru
 use std::str::FromStr;
 
 use crate::scheduler::{JobRunRecord, JobRunStatus, JobStatus, OverlapPolicy, ScheduledJob};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Mutex;
@@ -154,13 +154,20 @@ impl RunStore {
 
     /// Apply schema migrations sequentially within a transaction.
     pub fn migrate(&self) -> Result<()> {
-        let conn = self
+        let mut conn = self
             .conn
             .lock()
             .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
 
+        // Serialize schema inspection and updates across independent connections.
+        let transaction = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| {
+                CortexError::Internal(format!("failed to begin schema migration: {}", e))
+            })?;
+
         // Check if schema_version table exists
-        let table_exists: bool = conn
+        let table_exists: bool = transaction
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version'",
                 [],
@@ -171,77 +178,86 @@ impl RunStore {
             })?;
 
         let current_version: i32 = if table_exists {
-            conn.query_row(
-                "SELECT COALESCE(MAX(version), 0) FROM schema_version",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap_or(0)
+            transaction
+                .query_row(
+                    "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| {
+                    CortexError::Internal(format!("failed to read schema version: {}", e))
+                })?
         } else {
             0
         };
 
         if current_version < 1 {
-            conn.execute_batch(SCHEMA_V1).map_err(|e| {
+            transaction.execute_batch(SCHEMA_V1).map_err(|e| {
                 CortexError::Internal(format!("failed to apply migration 001: {}", e))
             })?;
 
             let now = Utc::now().to_rfc3339();
-            conn.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
-                params![1, now],
-            )
-            .map_err(|e| {
-                CortexError::Internal(format!("failed to record schema_version 1: {}", e))
-            })?;
+            transaction
+                .execute(
+                    "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
+                    params![1, now],
+                )
+                .map_err(|e| {
+                    CortexError::Internal(format!("failed to record schema_version 1: {}", e))
+                })?;
         }
 
         if current_version < 2 {
-            conn.execute_batch(SCHEMA_V2).map_err(|e| {
+            transaction.execute_batch(SCHEMA_V2).map_err(|e| {
                 CortexError::Internal(format!("failed to apply migration 002: {}", e))
             })?;
 
             let now = Utc::now().to_rfc3339();
-            conn.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
-                params![2, now],
-            )
-            .map_err(|e| {
-                CortexError::Internal(format!("failed to record schema_version 2: {}", e))
-            })?;
+            transaction
+                .execute(
+                    "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
+                    params![2, now],
+                )
+                .map_err(|e| {
+                    CortexError::Internal(format!("failed to record schema_version 2: {}", e))
+                })?;
         }
 
         if current_version < 3 {
-            conn.execute_batch(SCHEMA_V3).map_err(|e| {
+            transaction.execute_batch(SCHEMA_V3).map_err(|e| {
                 CortexError::Internal(format!("failed to apply migration 003: {}", e))
             })?;
 
             let now = Utc::now().to_rfc3339();
-            conn.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
-                params![3, now],
-            )
-            .map_err(|e| {
-                CortexError::Internal(format!("failed to record schema_version 3: {}", e))
-            })?;
+            transaction
+                .execute(
+                    "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
+                    params![3, now],
+                )
+                .map_err(|e| {
+                    CortexError::Internal(format!("failed to record schema_version 3: {}", e))
+                })?;
         }
 
         if current_version < 4 {
-            conn.execute_batch(SCHEMA_V4).map_err(|e| {
+            transaction.execute_batch(SCHEMA_V4).map_err(|e| {
                 CortexError::Internal(format!("failed to apply migration 004: {}", e))
             })?;
 
             let now = Utc::now().to_rfc3339();
-            conn.execute(
-                "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
-                params![4, now],
-            )
-            .map_err(|e| {
-                CortexError::Internal(format!("failed to record schema_version 4: {}", e))
-            })?;
+            transaction
+                .execute(
+                    "INSERT INTO schema_version (version, applied_at) VALUES (?1, ?2)",
+                    params![4, now],
+                )
+                .map_err(|e| {
+                    CortexError::Internal(format!("failed to record schema_version 4: {}", e))
+                })?;
         }
 
-        Ok(())
+        transaction
+            .commit()
+            .map_err(|e| CortexError::Internal(format!("failed to commit schema migration: {}", e)))
     }
 
     /// Return the currently applied schema migration version.
@@ -1470,6 +1486,60 @@ mod tests {
     fn test_store_in_memory_migrations() {
         let store = RunStore::in_memory().unwrap();
         assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_concurrent_store_initialization() {
+        let path = std::env::temp_dir().join(format!(
+            "cortex_concurrent_store_{}_{}.db",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let barrier = std::sync::Barrier::new(8);
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        RunStore::open(&path).and_then(|store| store.schema_version())
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        std::fs::remove_file(&path).unwrap();
+        for result in results {
+            assert_eq!(result.unwrap(), CURRENT_SCHEMA_VERSION);
+        }
+    }
+
+    #[test]
+    fn test_migration_failure_rolls_back_schema_and_versions() {
+        let conn = Connection::open_in_memory().unwrap();
+        // An incompatible preexisting table makes migration 002 fail.
+        conn.execute_batch("CREATE TABLE agents (id TEXT PRIMARY KEY)")
+            .unwrap();
+        let store = RunStore {
+            conn: Mutex::new(conn),
+            redactor: Redactor::default(),
+        };
+        let error = store.migrate().unwrap_err().to_string();
+        assert!(error.contains("failed to apply migration 002"), "{error}");
+        let conn = store.conn.lock().unwrap();
+        let created_tables: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('schema_version', 'runs', 'events', 'agent_checkpoints')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(created_tables, 0);
+        // The failure leaves the existing database intact.
+        conn.execute("INSERT INTO agents (id) VALUES ('existing-agent')", [])
+            .unwrap();
     }
 
     #[test]
