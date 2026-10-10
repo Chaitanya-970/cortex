@@ -60,6 +60,21 @@ Built natively for **Google Gemma 4**, open local models via Ollama, and frontie
 
 ---
 
+## Architecture
+
+<p align="center">
+  <img src="assets/architecture.png" alt="Cortex Architecture" width="750">
+</p>
+
+The runtime enforces an unidirectional execution boundary:
+
+- **Untrusted Model Layer**: Models propose structured JSON tool actions (Google Gemma 4, Ollama, Google AI Studio, Claude, OpenAI).
+- **Cortex Runtime Authority**: Intercepts proposals, validates schemas, canonicalizes workspace file paths, and sanitizes subprocess environments.
+- **Execution Engine**: Dispatches validated operations to boundary-checked filesystem tools, timeout-capped subprocess runners, and JSON-RPC MCP bridges.
+- **Persistence Layer**: Emits typed execution events to append-only SQLite storage in WAL mode (`~/.cortex/cortex.db`) with automatic regex secret redaction.
+
+---
+
 ## Installation
 
 ### Prerequisites
