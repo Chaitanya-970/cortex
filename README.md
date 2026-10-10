@@ -1,11 +1,7 @@
 # Cortex
 
 <p align="center">
-  <strong>Open-source Rust runtime and interactive control plane for autonomous AI workers</strong>
-</p>
-
-<p align="center">
-  <em>Built for Google Gemma 4, open models, sandboxed tool execution, and multi-agent coordination.</em>
+  <strong>Deterministic Rust runtime and execution harness for autonomous AI workers</strong>
 </p>
 
 <p align="center">
@@ -16,71 +12,121 @@
 </p>
 
 <p align="center">
-  <img src="assets/cortex-tui.png" alt="Cortex Interactive Terminal Control Plane" width="850">
+  <img src="assets/cortex-tui.png" alt="Cortex Terminal Interface" width="850">
 </p>
 
 ---
 
-## Runtime Authority & Security Invariants
+## Architectural Principles
 
-> **Model output is untrusted input. The runtime is the sole execution authority.**
+```
+  +-------------------------------------------------------------------------+
+  |                             Untrusted Model                             |
+  |                (Gemma 4 / Ollama / Google AI Studio / Claude / OpenAI)   |
+  +-----------------------------------+-------------------------------------+
+                                      | Structured JSON Tool Proposals
+                                      v
+  +-------------------------------------------------------------------------+
+  |                         Cortex Runtime Authority                        |
+  |  +------------------------+  +-------------------+  +----------------+  |
+  |  | Schema & Policy Filter |  | Path Canonicalizer|  | Env Sanitizer  |  |
+  |  +------------------------+  +-------------------+  +----------------+  |
+  +------------------+-----------------------+--------------------+---------+
+                     |                       |                    |
+                     v                       v                    v
+          +--------------------+   +-------------------+   +---------------+
+          | Sandboxed Filesys  |   | Subprocess Runner |   | MCP Bridge    |
+          | (Boundary Checked) |   | (Env Scrubbed)    |   | (JSON-RPC)    |
+          +--------------------+   +-------------------+   +---------------+
+                     |                       |                    |
+                     +-----------------------+--------------------+
+                                             |
+                                             v Execution Events
+  +-------------------------------------------------------------------------+
+  |                SQLite WAL Append-Only Trace Storage                     |
+  |              (~/.cortex/cortex.db with regex secret redaction)          |
+  +-------------------------------------------------------------------------+
+```
 
-Cortex treats all LLM responses as unverified advisory proposals. The Rust runtime guarantees strict operational isolation:
+### Security Invariants
 
-- **Strict Schema Validation**: Tool calls are verified against typed schemas before execution; arbitrary or unparsed model commands are rejected.
-- **Workspace Boundary Enforcement**: Canonicalized path resolution prevents directory traversal (`../`) and symlink escapes outside the workspace root.
-- **Subprocess Environment Scrubbing**: Shell tools execute in sanitized environments with sensitive credentials (`*_API_KEY`, tokens) stripped, bounded by process timeouts.
-- **Destructive Operation Denial**: High-risk operations (such as unauthorized `git push` or arbitrary root writes) are explicitly blocked by runtime security policy.
-- **Append-Only Tracing & Redaction**: Every prompt, tool execution, and state transition is captured in SQLite with automated regex secret redaction.
+1. **Model output is untrusted proposal data**: LLMs never hold execution authority. Every model completion is parsed into structured tool call proposals and evaluated against explicit runtime policy filters before dispatch.
+2. **Strict workspace containment**: File system tools resolve paths against canonical absolute roots via `std::fs::canonicalize`. Path traversal sequences (`../`), relative directory breakouts, and symlink escapes outside the target root trigger non-recoverable security policy violations.
+3. **Subprocess isolation and credential scrubbing**: Shell tasks run under bounded execution timeouts (default 60s) with stripped environment variables. Ambient authentication tokens (`*_API_KEY`, `*_SECRET`, `*_TOKEN`, `AWS_*`, `GITHUB_*`) are scrubbed before child process instantiation.
+4. **Destructive command mitigation**: High-risk operations (e.g., unauthorized `git push`, arbitrary root write attempts) are denied at the runtime interceptor boundary.
+5. **Deterministic trace auditability**: All state transitions, prompts, tool inputs, outputs, and token counts are persisted to SQLite with automatic credential redaction prior to serialization.
 
 ---
 
-## Key Features
+## System Architecture
 
-- 🖥️ **Interactive Terminal Control Plane (TUI)**: Launch `cortex` for an ultra-responsive, full-featured terminal workspace powered by Ratatui, featuring live streaming reasoning traces, slash commands, and real-time token/cost accounting.
-- ⚡ **Google Gemma 4 & Open Models Native**: First-class integration for Google Gemma 4 (`gemma4:12b`, `gemma-4-26b-it`, `codegemma`) both locally offline via Ollama and hosted via Google AI Studio, alongside OpenAI and Anthropic.
-- 🔒 **Defense-in-Depth Sandboxing**: Host isolation and optional container sandboxing with CPU/memory limits, read-only root filesystems, and network restrictions.
-- 🐝 **Multi-Agent Coordination & DAG Pipelines**: Define and coordinate specialized agent swarms with directed acyclic graph (DAG) pipelines, mailbox message buses, and supervisor-worker hierarchies.
-- ⏱️ **Persistent Scheduler & Cron**: Schedule autonomous tasks with standard 5-field cron syntax, one-shot timers, and configurable overlap policies (`skip`, `queue`, `replace`).
-- 🔌 **Model Context Protocol (MCP)**: Discover, register, and query external tools from any standard stdio or SSE MCP server.
-- 🎯 **Ground-Truth Benchmarks**: Built-in deterministic benchmark evaluation harness (`cortex bench`) to test coding and agent capabilities against verifiable ground truth.
+The codebase is organized into modular crates with clean separation of domain boundaries:
+
+```
+crates/
+├── cortex-core/       # Domain primitives, IDs, events, errors, secret redactor
+├── cortex-runtime/    # Execution loop, sandbox policies, tool registry, SQLite store
+├── cortex-tui/        # Ratatui terminal UI, event loop, slash command parser
+├── cortex-cli/        # Binary CLI entrypoint, argument parsing, workflow dispatch
+└── cortex-harness/    # Deterministic ground-truth evaluation suites & baselines
+```
+
+### Runtime Loop (`cortex-runtime`)
+
+The core execution engine implements an iterative evaluation state machine:
+
+$$\text{State}_{t+1} = \text{Execute}(\text{Runtime}, \text{Model}(\text{Context}_t))$$
+
+1. **Context Assembly**: Current workspace state, file index, tool definitions, and prior trajectory are formatted into structured system/user frames.
+2. **Model Invocation**: Dispatched to the configured `ModelProvider` endpoint via streaming SSE or standard completion calls.
+3. **Proposal Validation**: Proposed tool calls are deserialized against strongly typed JSON schemas registered in `ToolRegistry`.
+4. **Policy Enforcement**: Sandboxing boundary verification, path canonicalization, and argument inspection.
+5. **Execution & Event Recording**: Tools execute; structured `ExecutionEvent` records are appended to SQLite in WAL mode.
+6. **Termination Conditions**: The loop terminates when the model produces a final answer without tool calls, hits `max_iterations`, or receives a cancellation signal (`SIGINT` / `Ctrl+C`).
+
+### Storage Engine (`RunStore`)
+
+Persistence is handled by SQLite (`~/.cortex/cortex.db`) configured with:
+
+- `PRAGMA journal_mode = WAL;` (Write-Ahead Logging for concurrent non-blocking reads)
+- `PRAGMA synchronous = NORMAL;`
+- `PRAGMA busy_timeout = 5000;`
+
+Schema tables:
+- `runs`: Run metadata, task prompt, status (`running`, `completed`, `failed`, `cancelled`), timestamps, token counters, estimated USD cost.
+- `events`: Monotonic sequenced append-only event stream recording `RunStarted`, `ToolStarted`, `ToolCompleted`, `ToolFailed`, `ModelRequest`, `ModelResponse`, and `InterAgentMessage`.
 
 ---
 
-## Quickstart
+## Installation
 
 ### Prerequisites
 
-- **Rust**: $\ge$ 1.75 (`cargo`, `rustc`)
-- **Git**: Installed and available in `$PATH`
-- **SQLite**: Local database support (bundled via `rusqlite`)
+- Rust toolchain $\ge$ 1.75 (`cargo`, `rustc`)
+- Git
+- SQLite 3 (bundled at compile-time via `rusqlite`)
 
-### Installation
-
-Install the Cortex CLI globally using Cargo:
+### Building from Source
 
 ```bash
-# Install globally from GitHub
-cargo install --git https://github.com/x1-xh/cortex.git cortex-cli
-
-# Or install from a local checkout
 git clone https://github.com/x1-xh/cortex.git
 cd cortex
-cargo install --path crates/cortex-cli
+cargo build --release
 ```
 
-Ensure your Cargo binary directory is present in your shell's `$PATH`:
+Binary output: `./target/release/cortex`
+
+### Global Installation
 
 ```bash
-# Add to current shell session
-export PATH="$HOME/.cargo/bin:$PATH"
+# Install from local checkout
+cargo install --path crates/cortex-cli
 
-# Persist to shell configuration
-echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.zshrc   # zsh
-echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc  # bash
+# Install directly from Git repository
+cargo install --git https://github.com/x1-xh/cortex.git cortex-cli
 ```
 
-Verify your installation:
+Verify binary availability:
 
 ```bash
 cortex --version
@@ -90,117 +136,130 @@ cortex status
 
 ---
 
-## Interactive Terminal Control Plane (TUI)
+## CLI Reference
 
-Launch the interactive control plane by running `cortex` without arguments:
+### Interactive Terminal Control Plane (`cortex`)
+
+Running `cortex` without arguments launches the terminal control plane implemented with Ratatui:
 
 ```bash
-# Launch interactive TUI in current directory
 cortex
-
-# Launch with custom SQLite persistence path
 cortex --db /path/to/cortex.db
 ```
 
-### Views & Navigation
+#### View Tabs
 
-| Key | Tab View | Description |
-|---|---|---|
-| `1` | **Chat / Agent** | Live interactive coding agent, streaming reasoning traces, and diff viewer |
-| `2` | **Portals** | Configured inference endpoints, active model selection, and API key management |
-| `3` | **Coordination** | Multi-agent swarms, DAG execution pipelines, and inter-agent message feeds |
-| `4` | **Runs** | Searchable history of past execution runs, durations, token counts, and costs |
-| `5` | **Settings** | Runtime preferences, default model, base URL, and workspace sandbox settings |
+- `1` **Chat**: Interactive session prompt, real-time reasoning trace streaming, tool invocation diffs.
+- `2` **Portals**: Inference provider catalog, base URLs, credentials, active model dispatch.
+- `3` **Coordination**: Inter-agent message bus feed, DAG pipeline status, agent topology cards.
+- `4` **Runs**: Paginated historical execution runs queried from SQLite.
+- `5` **Settings**: User settings view (`~/.cortex/settings.json`), sandbox boundaries, token telemetry.
 
-- **Tab Navigation**: `Tab` / `Shift+Tab` or number keys `1`–`5`
-- **Command Palette**: Type `/` to open slash command autocomplete
-- **Cancel / Interrupt**: `Ctrl+C` cancels active execution without quitting
-- **Quit**: `Ctrl+Q` or `/exit`
+#### Navigation Keybindings
 
-### Built-in Slash Commands
+- `Tab` / `Shift+Tab`: Cycle active view tabs.
+- `1` – `5`: Direct tab jumps.
+- `/`: Open slash command autocomplete popup.
+- `Ctrl+C`: Cancel running agent iteration (double `Ctrl+C` terminates the harness).
+- `Ctrl+Q`: Exit application.
 
-| Command | Usage | Description |
-|---|---|---|
-| `/help` | `/help` | Display command catalog and keyboard shortcuts |
-| `/model` | `/model [list \| set <name>]` | Switch active inference model or list curated options |
-| `/settings` | `/settings [set <key> <val> \| reload]` | View or update `~/.cortex/settings.json` |
-| `/status` | `/status` | Display runtime health, active model, and storage status |
-| `/diff` | `/diff` | Inspect Git diff of workspace modifications |
-| `/sessions` | `/sessions` | List and resume saved conversation sessions |
-| `/clear` | `/clear` | Clear message buffer and archive session |
-| `/cost` | `/cost` | Detailed token usage and cost accounting breakdown |
+#### Supported Slash Commands
+
+- `/help`: Display command catalog and keyboard shortcuts.
+- `/model [list | set <name>]`: Inspect or switch active model provider.
+- `/settings [set <key> <val> | reload]`: Inspect or mutate `~/.cortex/settings.json`.
+- `/status`: Runtime diagnostics, workspace root, index status, and active portal.
+- `/diff`: Output uncommitted Git working tree diff within workspace boundary.
+- `/clear`: Flush current conversation buffer and archive session state to disk.
+- `/sessions` / `/resume <id>`: Session serialization and resumption.
+- `/cost`: Cumulative session token accounting and pricing breakdown.
 
 ---
 
-## CLI Usage & Workflows
+### Autonomous Execution (`cortex run`)
 
-### Autonomous Task Execution (`cortex run`)
-
-Execute autonomous agent tasks in a single command with workspace confinement, live telemetry, and cost accounting:
+Executes bounded agent tasks programmatically:
 
 ```bash
-# Google Gemma 4 (Local offline via Ollama — zero API key required)
-cortex run "inspect src/lib.rs and fix compiler warnings" --model ollama/gemma4:12b
+# Google Gemma 4 via local Ollama endpoint (zero external network dependency)
+cortex run "fix lifetime errors in src/agent/loop.rs" --model ollama/gemma4:12b
 
-# Google Gemma 4 (Hosted via Google AI Studio / Gemini API)
+# Google Gemma 4 via Google AI Studio / Gemini API endpoint
 export GEMINI_API_KEY="AIza..."
-cortex run "audit repository security" \
+cortex run "audit memory bounds across crates" \
   --model gemma-4-26b-it \
   --base-url https://generativelanguage.googleapis.com/v1beta/openai/
 
-# CodeGemma / Gemma 2 for specialized code editing
-cortex run "refactor error handling to use thiserror" --model ollama/codegemma
+# CodeGemma local refactoring
+cortex run "convert error enum to thiserror derive" --model ollama/codegemma
 
 # Anthropic Claude / OpenAI
-cortex run "implement user authentication module" --model claude-3-5-sonnet-20241022
+cortex run "implement DAG topological sorting" --model claude-3-5-sonnet-20241022
 
-# Explicit workspace confinement boundary
-cortex run "run cargo check and fix lints" --workspace /path/to/project
+# Confined to explicit workspace directory
+cortex run "cargo clippy --fix" --workspace /path/to/target/repo
 
-# Structured JSON output for headless pipelines and CI/CD
-cortex run "verify test suite" --json
+# Structured JSON output for automated test harnesses and CI
+cortex run "cargo test" --json
 ```
 
-### Execution History & Deterministic Replay (`cortex runs`)
-
-All execution traces, tool invocations, and model responses are stored in SQLite (`~/.cortex/cortex.db`):
+### Run Inspection & Deterministic Replay (`cortex runs`)
 
 ```bash
-# List recent execution runs
+# Query execution history
 cortex runs list --limit 20
 
-# Inspect full event trace with verbose tool arguments
+# Detailed event telemetry inspection
 cortex runs show <run-id> --verbose
 
-# Bit-exact deterministic replay from recorded model responses
+# Replay run deterministically against cached model responses
 cortex runs replay <run-id>
 ```
 
-### Deterministic Benchmark Evaluations (`cortex bench`)
+### Benchmark Evaluation Harness (`cortex bench`)
 
-Evaluate agent capabilities against verifiable ground-truth problem suites:
+Executes evaluation suites against deterministic ground-truth tasks:
 
 ```bash
-# Run coding evaluation suite
 cortex bench run --suite coding
-
-# Run benchmark suite and emit markdown report
 cortex bench run --suite coding --report reports/coding.md --json
 ```
 
 ---
 
-## Crate Workspace Topology
+## Configuration (`~/.cortex/settings.json`)
 
-| Crate | Path | Responsibility |
+Runtime defaults are configured via `~/.cortex/settings.json`:
+
+```json
+{
+  "model": "gpt-4o-mini",
+  "base_url": null,
+  "api_key": null,
+  "theme": "blue",
+  "max_iterations": 30,
+  "auto_save_sessions": true
+}
+```
+
+Authentication keys are resolved with the following precedence:
+1. Command-line flags (`--api-key`, `--base-url`)
+2. Environment variables (`CORTEX_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`)
+3. User configuration file (`~/.cortex/settings.json`)
+
+---
+
+## Workspace Crate Specifications
+
+| Crate | Directory | Primary Types & Functions |
 |---|---|---|
-| **`cortex-core`** | [`crates/cortex-core`](crates/cortex-core) | Domain identifiers (`AgentId`, `RunId`, `SessionId`), error taxonomy, event types, secret redactor |
-| **`cortex-runtime`** | [`crates/cortex-runtime`](crates/cortex-runtime) | Execution loop, model providers, sandbox isolation, tool registry, multi-agent bus, SQLite store |
-| **`cortex-tui`** | [`crates/cortex-tui`](crates/cortex-tui) | Ratatui terminal user interface, streaming chat, DAG viewer, and slash command harness |
-| **`cortex-cli`** | [`crates/cortex-cli`](crates/cortex-cli) | User-facing CLI entrypoint (`cortex`, `cortex run`, `cortex bench`, `cortex runs`) |
-| **`cortex-harness`** | [`crates/cortex-harness`](crates/cortex-harness) | Deterministic benchmark evaluation runner and baseline provider implementations |
+| `cortex-core` | [`crates/cortex-core`](crates/cortex-core) | `RunId`, `AgentId`, `ExecutionEvent`, `EventRecord`, `CortexError`, `Redactor`, `UserSettings` |
+| `cortex-runtime` | [`crates/cortex-runtime`](crates/cortex-runtime) | `AgentLoop`, `Workspace`, `ToolRegistry`, `ModelProvider`, `RunStore`, `SchedulerEngine`, `McpManager` |
+| `cortex-tui` | [`crates/cortex-tui`](crates/cortex-tui) | `App`, `ui::render`, `event::handle_key`, `commands::execute_command`, `theme` |
+| `cortex-cli` | [`crates/cortex-cli`](crates/cortex-cli) | `Cli`, `Commands::Run`, `Commands::Runs`, `Commands::Bench`, `Commands::Tui` |
+| `cortex-harness` | [`crates/cortex-harness`](crates/cortex-harness) | `BenchmarkRunner`, `BenchmarkBaselineProvider`, `EvaluationSuite` |
 
-To embed Cortex primitives inside your own Rust projects:
+### Embedding Cortex as a Dependency
 
 ```toml
 [dependencies]
@@ -211,24 +270,24 @@ cortex-tui = { git = "https://github.com/x1-xh/cortex.git" }
 
 ---
 
-## Verification & Quality Gates
+## Verification & Testing
 
-Cortex adheres to strict automated testing and static analysis standards:
+Every commit must satisfy all static analysis and deterministic verification checks:
 
 ```bash
-# Format check
+# Code formatting compliance
 cargo fmt --check
 
-# Type checking
+# Type check across all targets and features
 cargo check --workspace --all-targets --all-features
 
-# Strict linting (zero warnings permitted)
+# Static analysis and linter validation (-D warnings)
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-# Comprehensive workspace test suite
+# Unit, integration, and security test suites
 cargo test --workspace --all-targets --all-features
 
-# Documentation build
+# API documentation compilation
 cargo doc --workspace --no-deps --all-features
 ```
 
@@ -236,13 +295,12 @@ cargo doc --workspace --no-deps --all-features
 
 ## Documentation
 
-Full architectural documentation, guides, and tutorials are available at:
-
-- **Documentation Portal**: [https://cortex-ai.github.io](https://cortex-ai.github.io)
-- **Local Documentation**: [`docs/`](docs/)
+- Architecture and security threat model: [`docs/architecture/`](docs/architecture/)
+- Configuration and tool interfaces: [`docs/reference/`](docs/reference/)
+- Documentation portal: [https://cortex-ai.github.io](https://cortex-ai.github.io)
 
 ---
 
 ## License
 
-Licensed under the **Apache License, Version 2.0**. See [`LICENSE`](LICENSE) for details.
+Apache License, Version 2.0. See [`LICENSE`](LICENSE) for complete text.
