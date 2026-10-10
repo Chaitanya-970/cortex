@@ -97,6 +97,29 @@ mod tests {
     }
 
     #[test]
+    fn test_welcome_screen_renders_ascii_logo() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).expect("create test terminal");
+        let app = App::new(None);
+
+        terminal
+            .draw(|f| ui::render(f, &app))
+            .expect("draw welcome screen in test backend");
+
+        let buffer = terminal.backend().buffer();
+        let content: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+        // Verify CORTEX block glyphs are present in rendered buffer
+        assert!(content.contains("██████"));
+
+        // Also test narrow window fallback (< 56 columns)
+        let narrow_backend = TestBackend::new(45, 30);
+        let mut narrow_terminal = Terminal::new(narrow_backend).expect("create narrow terminal");
+        narrow_terminal
+            .draw(|f| ui::render(f, &app))
+            .expect("draw narrow welcome screen");
+    }
+
+    #[test]
     fn test_headless_rendering_with_populated_data() {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("create test terminal");

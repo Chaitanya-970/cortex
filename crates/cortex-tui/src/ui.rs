@@ -1015,6 +1015,19 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         };
 
         text_lines.push(Line::from(""));
+        if chunks[2].width >= 56 {
+            for (i, row) in theme::CORTEX_ASCII_LOGO.iter().enumerate() {
+                let color = theme::CORTEX_LOGO_GRADIENT[i % theme::CORTEX_LOGO_GRADIENT.len()];
+                text_lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(
+                        *row,
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
+            text_lines.push(Line::from(""));
+        }
         text_lines.push(Line::from(vec![
             Span::styled(
                 "  ◈ Cortex Code",
@@ -1223,7 +1236,9 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     // Dynamic Autoscroll calculation
     let total_lines = text_lines.len();
     let visible_height = chat_area.height as usize;
-    let scroll_y = if app.chat_auto_scroll {
+    let scroll_y = if app.chat_messages.is_empty() {
+        0
+    } else if app.chat_auto_scroll {
         total_lines.saturating_sub(visible_height)
     } else {
         let max_scroll = total_lines.saturating_sub(visible_height);

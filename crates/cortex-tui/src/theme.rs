@@ -156,3 +156,47 @@ pub fn input_shimmer_color(tick: usize) -> Color {
 pub fn whimsical_verb(index: usize) -> &'static str {
     WHIMSICAL_VERBS[index % WHIMSICAL_VERBS.len()]
 }
+
+// =========================================================================
+// ASCII Logo & Gradients
+// =========================================================================
+
+/// High-resolution geometric ASCII art logo matching the docs display font (`Righteous`/`Bungee`).
+///
+/// Each row is exactly 51 characters wide, fitting comfortably within standard 80-column terminal boundaries.
+pub const CORTEX_ASCII_LOGO: &[&str] = &[
+    " ██████╗  ██████╗ ██████╗ ████████╗███████╗██╗  ██╗",
+    "██╔════╝ ██╔═══██╗██╔══██╗╚══██╔══╝██╔════╝╚██╗██╔╝",
+    "██║      ██║   ██║██████╔╝   ██║   █████╗   ╚███╔╝ ",
+    "██║      ██║   ██║██╔══██╗   ██║   ██╔══╝   ██╔██╗ ",
+    "╚██████╗ ╚██████╔╝██║  ██║   ██║   ███████╗██╔╝ ██╗",
+    " ╚═════╝  ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝",
+];
+
+/// 6-step vertical blue gradient matching the docs website (`#bae6fd` -> `#7dd3fc` -> `#38bdf8` -> `#0284c7`).
+pub const CORTEX_LOGO_GRADIENT: &[Color] = &[
+    Color::Rgb(186, 230, 253), // #bae6fd (Light ice sky blue)
+    Color::Rgb(125, 211, 252), // #7dd3fc (Shimmer sky)
+    Color::Rgb(56, 189, 248),  // #38bdf8 (Cortex electric sky blue)
+    Color::Rgb(14, 165, 233),  // #0ea5e9 (Vivid sky blue)
+    Color::Rgb(2, 132, 199),   // #0284c7 (Deep azure)
+    Color::Rgb(3, 105, 161),   // #0369a1 (Deep ocean blue)
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cortex_ascii_logo_dimensions() {
+        assert_eq!(CORTEX_ASCII_LOGO.len(), 6);
+        for line in CORTEX_ASCII_LOGO {
+            assert_eq!(line.chars().count(), 51);
+        }
+    }
+
+    #[test]
+    fn test_cortex_logo_gradient_matches_rows() {
+        assert_eq!(CORTEX_LOGO_GRADIENT.len(), CORTEX_ASCII_LOGO.len());
+    }
+}
