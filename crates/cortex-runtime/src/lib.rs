@@ -20,10 +20,10 @@ pub mod tools;
 pub mod workspace;
 
 pub use agent::{
-    Agent, AgentContext, AgentEndpoint, AgentLifecycleEvent, AgentLoop, AgentManager,
-    AgentManifest, AgentMessage, AgentMessagePayload, AgentModelConfig, AgentPermissions,
-    AgentRunResult, AgentState, CancellationToken, ChatMessage, PermissionState, RoutingKey,
-    SessionMetadata, TodoItem, CODING_AGENT_POLICY,
+    Agent, AgentCapability, AgentContext, AgentDescriptor, AgentEndpoint, AgentLifecycleEvent,
+    AgentLoop, AgentManager, AgentManifest, AgentMessage, AgentMessagePayload, AgentModelConfig,
+    AgentPermissions, AgentRegistry, AgentRunResult, AgentState, CancellationToken, ChatMessage,
+    PermissionState, RoutingKey, SessionMetadata, TodoItem, CODING_AGENT_POLICY,
 };
 pub use mcp::{CortexConfig, McpClient, McpConfig, McpManager, McpServerConfig, McpTool};
 pub use model::{

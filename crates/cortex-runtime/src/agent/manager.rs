@@ -300,6 +300,7 @@ pub struct Agent {
 pub struct AgentManager {
     pub(super) agents: Arc<RwLock<HashMap<AgentId, Agent>>>,
     pub(super) coordination: Arc<Mutex<super::coordination::CoordinationState>>,
+    pub(super) registry: Arc<super::registry::AgentRegistry>,
     events: Arc<RwLock<Vec<AgentLifecycleEvent>>>,
     subscribers: Arc<Mutex<Vec<Sender<AgentLifecycleEvent>>>>,
 }
@@ -310,9 +311,15 @@ impl AgentManager {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             coordination: Arc::new(Mutex::new(super::coordination::CoordinationState::default())),
+            registry: Arc::new(super::registry::AgentRegistry::new()),
             events: Arc::new(RwLock::new(Vec::new())),
             subscribers: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// Access the [`AgentRegistry`](super::registry::AgentRegistry) associated with this manager.
+    pub fn registry(&self) -> Arc<super::registry::AgentRegistry> {
+        Arc::clone(&self.registry)
     }
 
     /// Register a new agent worker from a manifest.
@@ -364,6 +371,10 @@ impl AgentManager {
             lock.insert(id.clone(), agent.clone());
         }
 
+        let _ = self
+            .registry
+            .upsert(super::registry::AgentDescriptor::from_agent(&agent));
+
         self.emit_event(AgentLifecycleEvent::AgentCreated {
             agent_id: id,
             name: name.to_string(),
@@ -395,6 +406,8 @@ impl AgentManager {
         agent.state.transition_to(AgentState::Ready)?;
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
+
+        let _ = self.registry.update_status(agent_id, AgentState::Ready);
 
         let waker = coordination.revoke(agent_id);
         drop(coordination);
@@ -445,6 +458,8 @@ impl AgentManager {
                 let now = Utc::now().to_rfc3339();
                 agent.updated_at = now.clone();
 
+                let _ = self.registry.update_status(agent_id, AgentState::Running);
+
                 self.emit_event(AgentLifecycleEvent::AgentStarted {
                     agent_id: agent_id.clone(),
                     timestamp: now,
@@ -486,6 +501,8 @@ impl AgentManager {
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        let _ = self.registry.update_status(agent_id, AgentState::Paused);
+
         let waker = coordination.notify(agent_id);
         drop(coordination);
         self.emit_event(AgentLifecycleEvent::AgentPaused {
@@ -525,6 +542,8 @@ impl AgentManager {
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        let _ = self.registry.update_status(agent_id, AgentState::Running);
+
         self.emit_event(AgentLifecycleEvent::AgentResumed {
             agent_id: agent_id.clone(),
             timestamp: now,
@@ -554,6 +573,8 @@ impl AgentManager {
         agent.state.transition_to(AgentState::Stopped)?;
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
+
+        let _ = self.registry.update_status(agent_id, AgentState::Stopped);
 
         let waker = coordination.revoke(agent_id);
         drop(coordination);
@@ -588,6 +609,8 @@ impl AgentManager {
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
 
+        let _ = self.registry.update_status(agent_id, AgentState::Ready);
+
         let waker = coordination.revoke(agent_id);
         drop(coordination);
         self.emit_event(AgentLifecycleEvent::AgentReady {
@@ -620,6 +643,8 @@ impl AgentManager {
         agent.state.transition_to(AgentState::Failed)?;
         let now = Utc::now().to_rfc3339();
         agent.updated_at = now.clone();
+
+        let _ = self.registry.update_status(agent_id, AgentState::Failed);
 
         let waker = coordination.revoke(agent_id);
         drop(coordination);
@@ -680,6 +705,7 @@ impl AgentManager {
         let agent = lock
             .remove(agent_id)
             .ok_or_else(|| CortexError::NotFound(format!("agent '{}' not found", agent_id)))?;
+        let _ = self.registry.deregister(agent_id);
         let waker = coordination.remove(agent_id);
         drop(coordination);
         drop(lock);
@@ -805,6 +831,8 @@ impl AgentManager {
             .write()
             .map_err(|e| CortexError::Internal(format!("agents lock poisoned: {}", e)))?;
         for agent in loaded {
+            let desc = super::registry::AgentDescriptor::from_agent(&agent);
+            let _ = self.registry.upsert(desc);
             lock.insert(agent.id.clone(), agent);
         }
         Ok(())

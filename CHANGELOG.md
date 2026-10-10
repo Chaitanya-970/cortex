@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Double `Ctrl+C` force-quit support in interactive TUI chat: a second keystroke while cancellation is pending immediately exits the application.
 - Workspace `BackgroundIndexer` cancellation and graceful shutdown during application teardown.
 
+### AgentRegistry & Capability Discovery
+
+#### Added
+- Thread-safe `AgentRegistry` catalog backed by `Arc<RwLock<HashMap<AgentId, AgentDescriptor>>>` for peer discovery and capability queries.
+- `AgentDescriptor` public read snapshot and typed `AgentCapability` covering tools, wildcard patterns, model capacity tiers, and domain specializations.
+- Query APIs for role indexing, capability search, operational tags, and active worker filtering.
+- Automated lifecycle synchronization between `AgentManager` and `AgentRegistry` across creation, state transitions, and worker removal.
+
 ### Multi-Agent Coordination & Message Bus
 
 #### Added
