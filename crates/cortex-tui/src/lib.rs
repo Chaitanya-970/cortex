@@ -111,6 +111,15 @@ mod tests {
         // Verify CORTEX block glyphs are present in rendered buffer
         assert!(content.contains("██████"));
 
+        // Verify active model name appears exactly once (in bottom status bar, never duplicated)
+        let active_model = app.active_portal().model_name.as_str();
+        let occurrences = content.matches(active_model).count();
+        assert_eq!(
+            occurrences, 1,
+            "Model name should only appear once on screen, found {}",
+            occurrences
+        );
+
         // Also test narrow window fallback (< 56 columns)
         let narrow_backend = TestBackend::new(45, 30);
         let mut narrow_terminal = Terminal::new(narrow_backend).expect("create narrow terminal");

@@ -943,15 +943,15 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // Top Header: ~/project  git:main* · gpt-4o-mini · ● Ready
-            Constraint::Length(1), // Divider space
-            Constraint::Min(4),    // Message & execution stream
+            Constraint::Length(1),            // Top Header: ~/project  git:main* · ● Ready
+            Constraint::Length(1),            // Divider space
+            Constraint::Min(4),               // Message & execution stream
             Constraint::Length(input_height), // Dynamic prompt >
-            Constraint::Length(1), // Minimal status bar
+            Constraint::Length(1),            // Minimal status bar
         ])
         .split(area);
 
-    // 1. Top banner: ~/project  git:main* · gpt-4o-mini · ● Ready
+    // 1. Top banner: ~/project  git:main* · ● Ready
     let cwd = std::env::current_dir()
         .map(|p| {
             p.file_name()
@@ -975,14 +975,6 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     header_spans.push(Span::styled("· ", Style::default().fg(theme::COLOR_SUBTLE)));
-    header_spans.push(Span::styled(
-        &active_portal.model_name,
-        Style::default().fg(theme::COLOR_FG),
-    ));
-    header_spans.push(Span::styled(
-        " · ",
-        Style::default().fg(theme::COLOR_SUBTLE),
-    ));
 
     if app.chat_is_running {
         header_spans.push(Span::styled(
@@ -1038,11 +1030,6 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(
                 format!(" v{}", cortex_core::VERSION),
                 Style::default().fg(theme::COLOR_MUTED),
-            ),
-            Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
-            Span::styled(
-                &active_portal.model_name,
-                Style::default().fg(theme::COLOR_FG),
             ),
             Span::styled(" · ", Style::default().fg(theme::COLOR_SUBTLE)),
             Span::styled(index_desc, Style::default().fg(theme::COLOR_MUTED)),
