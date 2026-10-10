@@ -66,6 +66,11 @@ impl BackgroundIndexer {
     pub fn stop(&self) {
         self.cancelled.store(true, Ordering::Relaxed);
     }
+
+    /// Check if cancellation has been requested for this indexer.
+    pub fn is_stopped(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
 }
 
 fn scan_dir(root: &Path, current: &Path, collected: &mut Vec<String>, cancelled: &AtomicBool) {
@@ -121,5 +126,13 @@ mod tests {
         let current = indexer.read();
         assert_eq!(current.total_files, 0);
         assert!(!current.is_ready);
+    }
+
+    #[test]
+    fn test_indexer_stop() {
+        let indexer = BackgroundIndexer::new();
+        assert!(!indexer.is_stopped());
+        indexer.stop();
+        assert!(indexer.is_stopped());
     }
 }

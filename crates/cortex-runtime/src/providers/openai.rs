@@ -3,11 +3,11 @@
 //! Supports OpenAI, DeepSeek, OpenRouter, Groq, local Ollama, LM Studio,
 //! and other providers implementing the `/chat/completions` protocol.
 
+use super::transport;
 use crate::agent::{AgentContext, ChatMessage};
 use crate::model::{ModelDescriptor, ModelOutput, ModelProvider, ModelUsage, ToolCall};
 use cortex_core::{CortexError, Result};
 use std::sync::Mutex;
-use std::time::Duration;
 
 /// Model provider communicating via the standard OpenAI-compatible `/chat/completions` endpoint.
 pub struct OpenAiCompatibleProvider {
@@ -173,6 +173,12 @@ impl ModelProvider for OpenAiCompatibleProvider {
     }
 
     fn generate(&self, context: &AgentContext) -> Result<ModelOutput> {
+        if context.is_cancelled() {
+            return Err(CortexError::Cancelled(
+                "agent execution cancelled by request".to_string(),
+            ));
+        }
+
         let messages = self.format_messages(context);
         let tools = self.format_tools(context);
 
@@ -187,30 +193,17 @@ impl ModelProvider for OpenAiCompatibleProvider {
         }
 
         let endpoint = format!("{}/chat/completions", self.base_url);
-        let mut req = ureq::post(&endpoint)
-            .timeout(Duration::from_secs(self.timeout_secs))
-            .set("Content-Type", "application/json");
-
-        if let Some(key) = &self.api_key {
-            req = req.set("Authorization", &format!("Bearer {}", key));
-        }
-
-        let response = req.send_json(body).map_err(|e| {
-            let detail = match e {
-                ureq::Error::Status(status, resp) => {
-                    let text = resp.into_string().unwrap_or_default();
-                    format!("status code {}: {}", status, text)
-                }
-                ureq::Error::Transport(t) => format!("transport error: {}", t),
-            };
-            CortexError::Internal(format!(
-                "HTTP request to model API ({}) failed: {}",
-                endpoint, detail
-            ))
-        })?;
-
-        let resp_json: serde_json::Value = response.into_json().map_err(|e| {
-            CortexError::Internal(format!("failed to parse model response JSON: {}", e))
+        let resp_json: serde_json::Value = transport::run(context, async {
+            let client = transport::client(self.timeout_secs)?;
+            let mut req = client.post(&endpoint).json(&body);
+            if let Some(key) = &self.api_key {
+                req = req.bearer_auth(key);
+            }
+            transport::send(req)
+                .await?
+                .json()
+                .await
+                .map_err(transport::http_error)
         })?;
 
         // Extract token usage
@@ -304,92 +297,119 @@ impl ModelProvider for OpenAiCompatibleProvider {
         }
 
         let endpoint = format!("{}/chat/completions", self.base_url);
-        let mut req = ureq::post(&endpoint)
-            .timeout(Duration::from_secs(self.timeout_secs))
-            .set("Content-Type", "application/json");
-
-        if let Some(key) = &self.api_key {
-            req = req.set("Authorization", &format!("Bearer {}", key));
-        }
-
-        let response = match req.send_json(body) {
-            Ok(resp) => resp,
-            Err(_) => {
-                // If stream request fails to initiate, fallback to non-streaming generate
-                return self.generate(context);
+        let output = transport::run(context, async {
+            let client = transport::client(self.timeout_secs)?;
+            let mut req = client.post(&endpoint).json(&body);
+            if let Some(key) = &self.api_key {
+                req = req.bearer_auth(key);
             }
-        };
-
-        use std::io::BufRead;
-        let reader = std::io::BufReader::new(response.into_reader());
-        let mut accumulated_content = String::new();
-        let mut tool_calls_builder: Vec<(String, String, String)> = Vec::new();
-
-        for line_res in reader.lines() {
-            let line = match line_res {
-                Ok(l) => l,
-                Err(_) => break,
+            let mut response = match transport::send(req).await {
+                Ok(response) => response,
+                // Preserve compatibility with endpoints that reject streaming.
+                // Cancellation drops this future, so it never reaches fallback.
+                Err(_) => return Ok(None),
             };
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            if let Some(data) = trimmed.strip_prefix("data: ") {
-                let data = data.trim();
-                if data == "[DONE]" {
-                    break;
-                }
-                if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
-                    if let Some(usage) = chunk.get("usage") {
-                        let prompt = usage
-                            .get("prompt_tokens")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as usize;
-                        let completion = usage
-                            .get("completion_tokens")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as usize;
-                        *self.last_usage.lock().unwrap() =
-                            Some(ModelUsage::new(prompt, completion));
-                    }
+            let mut pending = Vec::new();
+            let mut done = false;
+            let mut accumulated_content = String::new();
+            let mut tool_calls_builder: Vec<(String, String, String)> = Vec::new();
 
-                    if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
-                        if let Some(choice) = choices.first() {
-                            if let Some(delta) = choice.get("delta") {
-                                if let Some(content) = delta.get("content").and_then(|c| c.as_str())
-                                {
-                                    if !content.is_empty() {
-                                        accumulated_content.push_str(content);
-                                        let _ = on_token(content);
-                                    }
-                                }
-                                if let Some(tc_array) =
-                                    delta.get("tool_calls").and_then(|tc| tc.as_array())
-                                {
-                                    for tc in tc_array {
-                                        let index =
-                                            tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0)
-                                                as usize;
-                                        while tool_calls_builder.len() <= index {
-                                            tool_calls_builder.push((
-                                                String::new(),
-                                                String::new(),
-                                                String::new(),
-                                            ));
-                                        }
-                                        if let Some(id) = tc.get("id").and_then(|s| s.as_str()) {
-                                            tool_calls_builder[index].0 = id.to_string();
-                                        }
-                                        if let Some(func) = tc.get("function") {
-                                            if let Some(name) =
-                                                func.get("name").and_then(|s| s.as_str())
-                                            {
-                                                tool_calls_builder[index].1.push_str(name);
+            while !done {
+                let chunk = response.chunk().await.map_err(transport::http_error)?;
+                let eof = chunk.is_none();
+                if let Some(chunk) = chunk {
+                    pending.extend_from_slice(&chunk);
+                }
+                while let Some(end) = pending.iter().position(|b| *b == b'\n').or({
+                    if eof && !pending.is_empty() {
+                        Some(pending.len())
+                    } else {
+                        None
+                    }
+                }) {
+                    let bytes: Vec<_> = pending.drain(..end).collect();
+                    if !pending.is_empty() {
+                        pending.remove(0);
+                    }
+                    let line = String::from_utf8(bytes).map_err(|e| {
+                        CortexError::Internal(format!("invalid UTF-8 in model stream: {e}"))
+                    })?;
+                    if context.is_cancelled() {
+                        return Err(CortexError::Cancelled(
+                            "model streaming cancelled by request".to_string(),
+                        ));
+                    }
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if let Some(data) = trimmed.strip_prefix("data: ") {
+                        let data = data.trim();
+                        if data == "[DONE]" {
+                            done = true;
+                            break;
+                        }
+                        if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data) {
+                            if let Some(usage) = chunk.get("usage") {
+                                let prompt = usage
+                                    .get("prompt_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0)
+                                    as usize;
+                                let completion = usage
+                                    .get("completion_tokens")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0)
+                                    as usize;
+                                *self.last_usage.lock().unwrap() =
+                                    Some(ModelUsage::new(prompt, completion));
+                            }
+
+                            if let Some(choices) = chunk.get("choices").and_then(|c| c.as_array()) {
+                                if let Some(choice) = choices.first() {
+                                    if let Some(delta) = choice.get("delta") {
+                                        if let Some(content) =
+                                            delta.get("content").and_then(|c| c.as_str())
+                                        {
+                                            if !content.is_empty() {
+                                                accumulated_content.push_str(content);
+                                                on_token(content)?;
                                             }
-                                            if let Some(args) =
-                                                func.get("arguments").and_then(|s| s.as_str())
-                                            {
-                                                tool_calls_builder[index].2.push_str(args);
+                                        }
+                                        if let Some(tc_array) =
+                                            delta.get("tool_calls").and_then(|tc| tc.as_array())
+                                        {
+                                            for tc in tc_array {
+                                                let index = tc
+                                                    .get("index")
+                                                    .and_then(|i| i.as_u64())
+                                                    .unwrap_or(0)
+                                                    as usize;
+                                                while tool_calls_builder.len() <= index {
+                                                    tool_calls_builder.push((
+                                                        String::new(),
+                                                        String::new(),
+                                                        String::new(),
+                                                    ));
+                                                }
+                                                if let Some(id) =
+                                                    tc.get("id").and_then(|s| s.as_str())
+                                                {
+                                                    tool_calls_builder[index].0 = id.to_string();
+                                                }
+                                                if let Some(func) = tc.get("function") {
+                                                    if let Some(name) =
+                                                        func.get("name").and_then(|s| s.as_str())
+                                                    {
+                                                        tool_calls_builder[index].1.push_str(name);
+                                                    }
+                                                    if let Some(args) = func
+                                                        .get("arguments")
+                                                        .and_then(|s| s.as_str())
+                                                    {
+                                                        tool_calls_builder[index].2.push_str(args);
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -398,34 +418,42 @@ impl ModelProvider for OpenAiCompatibleProvider {
                         }
                     }
                 }
-            }
-        }
 
-        if !tool_calls_builder.is_empty() {
-            let mut parsed_calls = Vec::new();
-            for (i, (id, name, args_str)) in tool_calls_builder.into_iter().enumerate() {
-                if name.is_empty() {
-                    continue;
+                if eof {
+                    break;
                 }
-                let call_id = if id.is_empty() {
-                    format!("call_{}", i)
-                } else {
-                    id
-                };
-                let args: serde_json::Value =
-                    serde_json::from_str(&args_str).unwrap_or_else(|_| serde_json::json!({}));
-                parsed_calls.push(ToolCall::new(call_id, name, args));
             }
-            if !parsed_calls.is_empty() {
-                return Ok(ModelOutput::ToolCalls(parsed_calls));
+
+            if !tool_calls_builder.is_empty() {
+                let mut parsed_calls = Vec::new();
+                for (i, (id, name, args_str)) in tool_calls_builder.into_iter().enumerate() {
+                    if name.is_empty() {
+                        continue;
+                    }
+                    let call_id = if id.is_empty() {
+                        format!("call_{}", i)
+                    } else {
+                        id
+                    };
+                    let args: serde_json::Value =
+                        serde_json::from_str(&args_str).unwrap_or_else(|_| serde_json::json!({}));
+                    parsed_calls.push(ToolCall::new(call_id, name, args));
+                }
+                if !parsed_calls.is_empty() {
+                    return Ok(Some(ModelOutput::ToolCalls(parsed_calls)));
+                }
             }
-        }
 
-        if !accumulated_content.is_empty() {
-            return Ok(ModelOutput::FinalAnswer(accumulated_content));
-        }
+            if !accumulated_content.is_empty() {
+                return Ok(Some(ModelOutput::FinalAnswer(accumulated_content)));
+            }
 
-        self.generate(context)
+            Ok(None)
+        })?;
+        match output {
+            Some(output) => Ok(output),
+            None => self.generate(context),
+        }
     }
 
     fn last_usage(&self) -> Option<ModelUsage> {

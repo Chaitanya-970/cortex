@@ -2,6 +2,8 @@
 
 pub mod fs;
 pub mod git;
+#[cfg(windows)]
+mod process_tree;
 pub mod search;
 pub mod shell;
 

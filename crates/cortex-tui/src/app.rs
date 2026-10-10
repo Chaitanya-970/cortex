@@ -1174,19 +1174,37 @@ impl App {
         });
     }
 
+    /// Check whether the active chat agent is currently in the process of cancelling.
+    pub fn is_chat_cancelling(&self) -> bool {
+        self.chat_handle
+            .as_ref()
+            .is_some_and(|h| h.cancel_token.is_cancelled())
+    }
+
     /// Cancel the currently executing agent run, if any.
     pub fn cancel_chat_agent(&mut self) {
         if let Some(handle) = &self.chat_handle {
+            if !handle.cancel_token.is_cancelled() {
+                handle.cancel_token.cancel();
+                let now = chrono::Utc::now().format("%H:%M:%S").to_string();
+                self.chat_messages.push(ChatMessageItem {
+                    role: ChatRole::System,
+                    content: "Cancellation requested... Waiting for agent to abort gracefully (press Ctrl+C again to force quit)."
+                        .to_string(),
+                    timestamp: now,
+                    is_expanded: false,
+                });
+                self.status_message =
+                    Some("Sent cancellation signal to running agent.".to_string());
+            }
+        }
+    }
+
+    /// Gracefully shutdown background workers and cancel active executions.
+    pub fn shutdown(&mut self) {
+        self.indexer.stop();
+        if let Some(handle) = &self.chat_handle {
             handle.cancel_token.cancel();
-            let now = chrono::Utc::now().format("%H:%M:%S").to_string();
-            self.chat_messages.push(ChatMessageItem {
-                role: ChatRole::System,
-                content: "Cancellation requested... Waiting for agent to abort gracefully."
-                    .to_string(),
-                timestamp: now,
-                is_expanded: false,
-            });
-            self.status_message = Some("Sent cancellation signal to running agent.".to_string());
         }
     }
 
@@ -1643,6 +1661,12 @@ impl App {
                 ));
             }
         }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 

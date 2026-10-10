@@ -104,7 +104,17 @@ pub trait ModelProvider: Send + Sync {
         context: &AgentContext,
         on_token: &mut dyn FnMut(&str) -> Result<()>,
     ) -> Result<ModelOutput> {
+        if context.is_cancelled() {
+            return Err(CortexError::Cancelled(
+                "agent execution cancelled by request".to_string(),
+            ));
+        }
         let output = self.generate(context)?;
+        if context.is_cancelled() {
+            return Err(CortexError::Cancelled(
+                "agent execution cancelled by request".to_string(),
+            ));
+        }
         if let ModelOutput::FinalAnswer(ref ans) = output {
             on_token(ans)?;
         }
@@ -166,9 +176,19 @@ impl ModelProvider for MockModelProvider {
         context: &AgentContext,
         on_token: &mut dyn FnMut(&str) -> Result<()>,
     ) -> Result<ModelOutput> {
+        if context.is_cancelled() {
+            return Err(CortexError::Cancelled(
+                "agent execution cancelled by request".to_string(),
+            ));
+        }
         let output = self.generate(context)?;
         if let ModelOutput::FinalAnswer(ref ans) = output {
             for word in ans.split_inclusive(' ') {
+                if context.is_cancelled() {
+                    return Err(CortexError::Cancelled(
+                        "agent execution cancelled by request".to_string(),
+                    ));
+                }
                 on_token(word)?;
             }
         }
@@ -246,9 +266,19 @@ impl ModelProvider for ReplayModelProvider {
         context: &AgentContext,
         on_token: &mut dyn FnMut(&str) -> Result<()>,
     ) -> Result<ModelOutput> {
+        if context.is_cancelled() {
+            return Err(CortexError::Cancelled(
+                "agent execution cancelled by request".to_string(),
+            ));
+        }
         let output = self.generate(context)?;
         if let ModelOutput::FinalAnswer(ref ans) = output {
             for word in ans.split_inclusive(' ') {
+                if context.is_cancelled() {
+                    return Err(CortexError::Cancelled(
+                        "agent execution cancelled by request".to_string(),
+                    ));
+                }
                 on_token(word)?;
             }
         }

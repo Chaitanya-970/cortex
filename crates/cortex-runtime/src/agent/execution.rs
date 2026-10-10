@@ -109,6 +109,8 @@ pub struct AgentContext {
     pub permission_state: PermissionState,
     /// Session metadata and telemetry.
     pub session_metadata: SessionMetadata,
+    /// Optional cancellation token for cooperative cancellation.
+    pub cancellation_token: Option<CancellationToken>,
 }
 
 impl AgentContext {
@@ -130,6 +132,7 @@ impl AgentContext {
             todos: Vec::new(),
             permission_state: PermissionState::default(),
             session_metadata: SessionMetadata::default(),
+            cancellation_token: None,
         }
     }
 
@@ -156,6 +159,19 @@ impl AgentContext {
     pub fn with_permission_state(mut self, state: PermissionState) -> Self {
         self.permission_state = state;
         self
+    }
+
+    /// Attach a cooperative cancellation token to this context.
+    pub fn with_cancellation_token(mut self, token: CancellationToken) -> Self {
+        self.cancellation_token = Some(token);
+        self
+    }
+
+    /// Check if cooperative cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancellation_token
+            .as_ref()
+            .is_some_and(|t| t.is_cancelled())
     }
 
     /// Append a message to the context history.
@@ -316,6 +332,7 @@ impl AgentLoop {
         model: &dyn ModelProvider,
         registry: &ToolRegistry,
     ) -> Result<AgentRunResult> {
+        context.cancellation_token = Some(self.cancellation_token.clone());
         context.tools = registry.list();
         let start_time = Instant::now();
         let started_at = Utc::now().to_rfc3339();
@@ -391,12 +408,55 @@ impl AgentLoop {
 
             // Generate next action from model (with progressive token streaming)
             let mut on_token = |chunk: &str| {
+                if self.cancellation_token.is_cancelled() {
+                    return Err(CortexError::Cancelled(
+                        "agent execution cancelled by request".to_string(),
+                    ));
+                }
                 if let Some(cb) = &self.token_callback {
                     cb(chunk);
                 }
                 Ok(())
             };
-            let output = model.stream(context, &mut on_token)?;
+            let output = match model.stream(context, &mut on_token).and_then(|output| {
+                if self.cancellation_token.is_cancelled() {
+                    Err(CortexError::Cancelled(
+                        "agent execution cancelled by request".to_string(),
+                    ))
+                } else {
+                    Ok(output)
+                }
+            }) {
+                Ok(out) => out,
+                Err(CortexError::Cancelled(reason)) => {
+                    let duration_ms = start_time.elapsed().as_millis() as u64;
+                    let finished_at = Utc::now().to_rfc3339();
+                    let estimated_cost = crate::providers::estimate_cost(
+                        &model.descriptor().name,
+                        total_prompt_tokens,
+                        total_completion_tokens,
+                    );
+                    if let Some(store) = &self.store {
+                        let cancel_event = ExecutionEvent::RunCancelled {
+                            run_id: context.run_id.clone(),
+                            reason: reason.clone(),
+                        };
+                        store.record_event(&EventRecord::new(sequence, cancel_event))?;
+                        store.record_run_completion(
+                            &context.run_id,
+                            "cancelled",
+                            &finished_at,
+                            duration_ms,
+                            total_prompt_tokens as u32,
+                            total_completion_tokens as u32,
+                            estimated_cost,
+                            Some(&reason),
+                        )?;
+                    }
+                    return Err(CortexError::Cancelled(reason));
+                }
+                Err(e) => return Err(e),
+            };
             if let Some(usage) = model.last_usage() {
                 total_prompt_tokens += usage.prompt_tokens;
                 total_completion_tokens += usage.completion_tokens;
@@ -519,7 +579,34 @@ impl AgentLoop {
                         }
 
                         // Execute tool through registry (validates schema before dispatch)
-                        let tool_result = registry.execute(&call.name, &call.arguments);
+                        let tool_result = registry.execute_with_cancellation(
+                            &call.name,
+                            &call.arguments,
+                            Some(&self.cancellation_token),
+                        );
+
+                        if let Err(CortexError::Cancelled(reason)) = &tool_result {
+                            let duration_ms = start_time.elapsed().as_millis() as u64;
+                            let finished_at = Utc::now().to_rfc3339();
+                            if let Some(store) = &self.store {
+                                let cancel_event = ExecutionEvent::RunCancelled {
+                                    run_id: context.run_id.clone(),
+                                    reason: reason.clone(),
+                                };
+                                store.record_event(&EventRecord::new(sequence, cancel_event))?;
+                                store.record_run_completion(
+                                    &context.run_id,
+                                    "cancelled",
+                                    &finished_at,
+                                    duration_ms,
+                                    total_prompt_tokens as u32,
+                                    total_completion_tokens as u32,
+                                    0.0,
+                                    Some(reason),
+                                )?;
+                            }
+                            return Err(CortexError::Cancelled(reason.clone()));
+                        }
 
                         match tool_result {
                             Ok(res) => {
@@ -751,5 +838,42 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    #[test]
+    fn test_agent_loop_cancellation_during_streaming() {
+        let mut context = AgentContext::new("stream and cancel");
+        let model = MockModelProvider::new();
+        let registry = ToolRegistry::new();
+
+        model.queue_response(ModelOutput::FinalAnswer(
+            "one two three four five six seven eight nine ten".to_string(),
+        ));
+
+        let token = CancellationToken::new();
+        let token_for_cb = token.clone();
+        let received_tokens = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count_cb = Arc::clone(&received_tokens);
+
+        let token_cb = Arc::new(move |_chunk: &str| {
+            let prev = count_cb.fetch_add(1, Ordering::SeqCst);
+            if prev >= 2 {
+                token_for_cb.cancel();
+            }
+        });
+
+        let agent_loop = AgentLoop::new(5)
+            .with_cancellation_token(token)
+            .with_token_callback(token_cb);
+
+        let err = agent_loop.run(&mut context, &model, &registry).unwrap_err();
+        match err {
+            CortexError::Cancelled(reason) => {
+                assert!(reason.contains("cancelled"));
+            }
+            other => panic!("expected Cancelled error, got: {:?}", other),
+        }
+
+        assert!(received_tokens.load(Ordering::SeqCst) < 10);
     }
 }

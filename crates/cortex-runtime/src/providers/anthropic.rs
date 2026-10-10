@@ -2,11 +2,11 @@
 //!
 //! Communicates with the `/v1/messages` endpoint using tool_use and tool_result blocks.
 
+use super::transport;
 use crate::agent::{AgentContext, ChatMessage};
 use crate::model::{ModelDescriptor, ModelOutput, ModelProvider, ModelUsage, ToolCall};
 use cortex_core::{CortexError, Result};
 use std::sync::Mutex;
-use std::time::Duration;
 
 /// Model provider communicating via the Anthropic Claude Messages API.
 pub struct AnthropicProvider {
@@ -131,6 +131,12 @@ impl ModelProvider for AnthropicProvider {
     }
 
     fn generate(&self, context: &AgentContext) -> Result<ModelOutput> {
+        if context.is_cancelled() {
+            return Err(CortexError::Cancelled(
+                "agent execution cancelled by request".to_string(),
+            ));
+        }
+
         let api_key = self.api_key.as_ref().ok_or_else(|| {
             CortexError::Internal(
                 "Anthropic API key is not configured. Set ANTHROPIC_API_KEY environment variable."
@@ -155,21 +161,18 @@ impl ModelProvider for AnthropicProvider {
         }
 
         let endpoint = format!("{}/messages", self.base_url);
-        let req = ureq::post(&endpoint)
-            .timeout(Duration::from_secs(self.timeout_secs))
-            .set("x-api-key", api_key)
-            .set("anthropic-version", "2023-06-01")
-            .set("Content-Type", "application/json");
-
-        let response = req.send_json(body).map_err(|e| {
-            CortexError::Internal(format!(
-                "HTTP request to Anthropic API ({}) failed: {}",
-                endpoint, e
-            ))
-        })?;
-
-        let resp_json: serde_json::Value = response.into_json().map_err(|e| {
-            CortexError::Internal(format!("failed to parse Anthropic response JSON: {}", e))
+        let resp_json: serde_json::Value = transport::run(context, async {
+            let client = transport::client(self.timeout_secs)?;
+            let req = client
+                .post(&endpoint)
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&body);
+            transport::send(req)
+                .await?
+                .json()
+                .await
+                .map_err(transport::http_error)
         })?;
 
         // Extract usage

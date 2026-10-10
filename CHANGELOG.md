@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added dynamic Python interpreter detection (`detect_python`) probing `python3`, `python`, and `py`.
 - Normalized benchmark task verification commands for Windows platforms to resolve task execution failures in `cortex bench run` and CLI tests.
 
+### Graceful Cancellation Latency & Process Teardown
+
+#### Fixed
+- Cancellation now interrupts OpenAI-compatible and Anthropic HTTP requests while waiting for headers or body bytes, including incomplete SSE lines, without waiting for the provider timeout.
+- Shell cancellation stays active while descendants hold output pipes open after the direct shell exits; Windows job objects retain ownership of these descendants.
+- Already-cancelled tool calls are rejected before dispatch, and cancellation during the final model token is recorded as a cancelled run.
+- Recursive search tools check cancellation during directory traversal and matching.
+- Interruptible HTTP streaming in `ModelProvider` implementations: `OpenAiCompatibleProvider` and trait methods poll cooperative cancellation tokens and immediately terminate socket reads and token streaming on cancel.
+- Added `execute_with_cancellation` to `Tool` trait and `ToolRegistry`, making subprocess tools (`shell`, `bash`, `execute_command`) interruptible without blocking the agent loop.
+- Child process tree termination for `shell` execution: killing spawned process trees immediately upon cancellation.
+- Double `Ctrl+C` force-quit support in interactive TUI chat: a second keystroke while cancellation is pending immediately exits the application.
+- Workspace `BackgroundIndexer` cancellation and graceful shutdown during application teardown.
+
 ### Multi-Agent Coordination & Message Bus
 
 #### Added

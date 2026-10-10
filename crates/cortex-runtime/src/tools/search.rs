@@ -1,5 +1,6 @@
 //! Search tools for workspace files, code symbols, glob patterns, and text inspection.
 
+use crate::agent::CancellationToken;
 use crate::tool::{PermissionLevel, Tool, ToolDefinition, ToolResult};
 use crate::workspace::Workspace;
 use cortex_core::{CortexError, Result};
@@ -22,7 +23,21 @@ const IGNORED_DIRS: &[&str] = &[
 ];
 
 /// Helper to recursively collect files within a directory, pruning ignored directories.
-fn walk_dir_pruned(current: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+fn check_cancelled(token: Option<&CancellationToken>) -> Result<()> {
+    if token.is_some_and(CancellationToken::is_cancelled) {
+        return Err(CortexError::Cancelled(
+            "workspace search cancelled by request".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn walk_dir_pruned(
+    current: &Path,
+    files: &mut Vec<PathBuf>,
+    token: Option<&CancellationToken>,
+) -> Result<()> {
+    check_cancelled(token)?;
     if !current.exists() {
         return Ok(());
     }
@@ -36,13 +51,14 @@ fn walk_dir_pruned(current: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
     })?;
 
     for entry in entries {
+        check_cancelled(token)?;
         let entry = entry.map_err(|e| CortexError::Internal(e.to_string()))?;
         let path = entry.path();
         let file_name = entry.file_name().to_string_lossy().to_string();
 
         if path.is_dir() {
             if !IGNORED_DIRS.contains(&file_name.as_str()) && !file_name.starts_with('.') {
-                walk_dir_pruned(&path, files)?;
+                walk_dir_pruned(&path, files, token)?;
             }
         } else if path.is_file() {
             files.push(path);
@@ -99,6 +115,15 @@ impl Tool for GrepTool {
     }
 
     fn execute(&self, input: &serde_json::Value) -> Result<ToolResult> {
+        self.execute_with_cancellation(input, None)
+    }
+
+    fn execute_with_cancellation(
+        &self,
+        input: &serde_json::Value,
+        token: Option<&CancellationToken>,
+    ) -> Result<ToolResult> {
+        check_cancelled(token)?;
         let pattern = input["pattern"].as_str().ok_or_else(|| {
             CortexError::Validation("missing required 'pattern' parameter".to_string())
         })?;
@@ -125,7 +150,7 @@ impl Tool for GrepTool {
         if start_dir.is_file() {
             files.push(start_dir.clone());
         } else {
-            walk_dir_pruned(&start_dir, &mut files)?;
+            walk_dir_pruned(&start_dir, &mut files, token)?;
         }
 
         let query = if case_sensitive {
@@ -136,6 +161,7 @@ impl Tool for GrepTool {
 
         let mut matches = Vec::new();
         for file in files {
+            check_cancelled(token)?;
             if is_binary_file(&file) {
                 continue;
             }
@@ -145,9 +171,10 @@ impl Tool for GrepTool {
                     .strip_prefix(self.workspace.root())
                     .unwrap_or(&file)
                     .to_string_lossy()
-                    .to_string();
+                    .replace('\\', "/");
 
                 for (idx, line) in content.lines().enumerate() {
+                    check_cancelled(token)?;
                     let matched = if case_sensitive {
                         line.contains(&query)
                     } else {
@@ -242,6 +269,15 @@ impl Tool for GlobTool {
     }
 
     fn execute(&self, input: &serde_json::Value) -> Result<ToolResult> {
+        self.execute_with_cancellation(input, None)
+    }
+
+    fn execute_with_cancellation(
+        &self,
+        input: &serde_json::Value,
+        token: Option<&CancellationToken>,
+    ) -> Result<ToolResult> {
+        check_cancelled(token)?;
         let pattern = input["pattern"].as_str().ok_or_else(|| {
             CortexError::Validation("missing required 'pattern' parameter".to_string())
         })?;
@@ -256,15 +292,16 @@ impl Tool for GlobTool {
         }
 
         let mut files = Vec::new();
-        walk_dir_pruned(&start_dir, &mut files)?;
+        walk_dir_pruned(&start_dir, &mut files, token)?;
 
         let mut matched = Vec::new();
         for file in files {
+            check_cancelled(token)?;
             let rel = file
                 .strip_prefix(self.workspace.root())
                 .unwrap_or(&file)
                 .to_string_lossy()
-                .to_string();
+                .replace('\\', "/");
 
             if matches_glob(pattern, &rel) {
                 matched.push(rel);
@@ -318,6 +355,15 @@ impl Tool for FindTool {
     }
 
     fn execute(&self, input: &serde_json::Value) -> Result<ToolResult> {
+        self.execute_with_cancellation(input, None)
+    }
+
+    fn execute_with_cancellation(
+        &self,
+        input: &serde_json::Value,
+        token: Option<&CancellationToken>,
+    ) -> Result<ToolResult> {
+        check_cancelled(token)?;
         let name_query = input["name"].as_str().ok_or_else(|| {
             CortexError::Validation("missing required 'name' parameter".to_string())
         })?;
@@ -341,7 +387,9 @@ impl Tool for FindTool {
             query: &str,
             kind: &str,
             matches: &mut Vec<String>,
+            token: Option<&CancellationToken>,
         ) -> Result<()> {
+            check_cancelled(token)?;
             if !current.exists() {
                 return Ok(());
             }
@@ -350,6 +398,7 @@ impl Tool for FindTool {
             })?;
 
             for entry in entries {
+                check_cancelled(token)?;
                 let entry = entry.map_err(|e| CortexError::Internal(e.to_string()))?;
                 let path = entry.path();
                 let file_name = entry.file_name().to_string_lossy().to_string();
@@ -365,7 +414,7 @@ impl Tool for FindTool {
                     .strip_prefix(root)
                     .unwrap_or(&path)
                     .to_string_lossy()
-                    .to_string();
+                    .replace('\\', "/");
 
                 if name_matches {
                     match kind {
@@ -383,7 +432,7 @@ impl Tool for FindTool {
                 }
 
                 if is_dir {
-                    walk_find(root, &path, query, kind, matches)?;
+                    walk_find(root, &path, query, kind, matches, token)?;
                 }
             }
             Ok(())
@@ -395,6 +444,7 @@ impl Tool for FindTool {
             &query_lower,
             kind,
             &mut matches,
+            token,
         )?;
 
         matches.sort();
@@ -444,6 +494,15 @@ impl Tool for SearchCodeTool {
     }
 
     fn execute(&self, input: &serde_json::Value) -> Result<ToolResult> {
+        self.execute_with_cancellation(input, None)
+    }
+
+    fn execute_with_cancellation(
+        &self,
+        input: &serde_json::Value,
+        token: Option<&CancellationToken>,
+    ) -> Result<ToolResult> {
+        check_cancelled(token)?;
         let query = input["query"].as_str().ok_or_else(|| {
             CortexError::Validation("missing required 'query' parameter".to_string())
         })?;
@@ -471,10 +530,11 @@ impl Tool for SearchCodeTool {
             });
 
         let mut files = Vec::new();
-        walk_dir_pruned(&start_dir, &mut files)?;
+        walk_dir_pruned(&start_dir, &mut files, token)?;
 
         let mut results = Vec::new();
         for file in files {
+            check_cancelled(token)?;
             if let Some(exts) = &allowed_extensions {
                 let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
                 if !exts.contains(&ext) {
@@ -492,9 +552,10 @@ impl Tool for SearchCodeTool {
                     .strip_prefix(self.workspace.root())
                     .unwrap_or(&file)
                     .to_string_lossy()
-                    .to_string();
+                    .replace('\\', "/");
 
                 for (idx, line) in lines.iter().enumerate() {
+                    check_cancelled(token)?;
                     if line.contains(query) {
                         let start = idx.saturating_sub(1);
                         let end = (idx + 2).min(lines.len());
@@ -532,6 +593,32 @@ impl Tool for SearchCodeTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelled_searches_stop_before_traversal() {
+        let root = std::env::temp_dir().join(cortex_core::RunId::generate().as_str());
+        let workspace = Arc::new(Workspace::new(&root).unwrap());
+        let token = CancellationToken::new();
+        token.cancel();
+        let searches: Vec<Box<dyn Tool>> = vec![
+            Box::new(GrepTool::new(workspace.clone())),
+            Box::new(GlobTool::new(workspace.clone())),
+            Box::new(FindTool::new(workspace.clone())),
+            Box::new(SearchCodeTool::new(workspace)),
+        ];
+        let input = json!({"pattern": "*", "name": "file", "query": "symbol"});
+        for tool in searches {
+            assert!(matches!(
+                tool.execute_with_cancellation(&input, Some(&token)),
+                Err(CortexError::Cancelled(_))
+            ));
+        }
+        assert!(matches!(
+            walk_dir_pruned(&root, &mut Vec::new(), Some(&token)),
+            Err(CortexError::Cancelled(_))
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn test_search_tools_lifecycle() {
