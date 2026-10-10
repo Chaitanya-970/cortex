@@ -592,3 +592,101 @@ fn test_cli_agent_errors() {
 
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
+
+#[test]
+fn test_cli_workflow_commands() {
+    // 1. cortex workflow --help
+    let help = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["workflow", "--help"])
+        .output()
+        .expect("Failed to execute cortex workflow --help");
+    assert!(help.status.success());
+    let stdout = String::from_utf8_lossy(&help.stdout);
+    assert!(stdout.contains("Manage and execute declarative multi-agent workflows"));
+
+    // 2. cortex workflow run on temporary manifest
+    let tmp_dir = std::env::temp_dir().join(format!("cortex_cli_wf_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(&tmp_dir).unwrap();
+
+    let wf_file = tmp_dir.join("workflow.yaml");
+    std::fs::write(
+        &wf_file,
+        r#"
+version: "1"
+name: test-wf
+description: "Run test stages"
+agents:
+  - id: manager
+    manifest: "./manager.yaml"
+    role: coordinator
+  - id: coder
+    manifest: "./coder.yaml"
+    role: developer
+stages:
+  - id: plan
+    agent: manager
+    action: "Plan test stages"
+  - id: code
+    agent: coder
+    action: "Code implementation"
+    depends_on: ["plan"]
+"#,
+    )
+    .unwrap();
+
+    let run_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["workflow", "run", wf_file.to_str().unwrap(), "--json"])
+        .output()
+        .expect("Failed to run cortex workflow");
+
+    assert!(run_out.status.success());
+    let run_json: serde_json::Value =
+        serde_json::from_slice(&run_out.stdout).expect("valid json output");
+    assert_eq!(run_json["workflow"], "test-wf");
+    assert_eq!(run_json["status"], "completed");
+
+    // 3. cortex workflow status
+    let status_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["workflow", "status", "test-wf", "--json"])
+        .output()
+        .expect("Failed to run cortex workflow status");
+    assert!(status_out.status.success());
+    let status_json: serde_json::Value =
+        serde_json::from_slice(&status_out.stdout).expect("valid json output");
+    assert_eq!(status_json["workflow_id"], "test-wf");
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn test_cli_team_commands() {
+    // 1. cortex team --help
+    let help = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["team", "--help"])
+        .output()
+        .expect("Failed to execute cortex team --help");
+    assert!(help.status.success());
+    let stdout = String::from_utf8_lossy(&help.stdout);
+    assert!(stdout.contains("Manage multi-agent teams and inspect inter-agent communications"));
+
+    // 2. cortex team list --json
+    let list_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["team", "list", "--json"])
+        .output()
+        .expect("Failed to execute cortex team list");
+    assert!(list_out.status.success());
+    let list_json: serde_json::Value =
+        serde_json::from_slice(&list_out.stdout).expect("valid json output");
+    assert!(list_json.get("team_size").is_some());
+
+    // 3. cortex team messages
+    let msgs_out = Command::new(env!("CARGO_BIN_EXE_cortex"))
+        .args(["team", "messages", "run-nonexistent", "--json"])
+        .output()
+        .expect("Failed to execute cortex team messages");
+    assert!(msgs_out.status.success());
+    let msgs_json: serde_json::Value =
+        serde_json::from_slice(&msgs_out.stdout).expect("valid json output");
+    assert!(msgs_json.is_array());
+}

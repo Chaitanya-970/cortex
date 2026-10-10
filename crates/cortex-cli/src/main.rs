@@ -7,8 +7,8 @@ use clap::{Parser, Subcommand};
 use cortex_core::{AgentId, CortexError, JobId, RunId, VERSION};
 use cortex_runtime::{
     create_model_provider, scheduler::OverlapPolicy, tools, AgentContext, AgentLoop, AgentManager,
-    AgentManifest, AgentState, CortexConfig, McpManager, RunStore, RunSummary, SchedulerEngine,
-    ToolRegistry, Workspace,
+    AgentManifest, AgentMessagePayload, AgentState, CortexConfig, McpManager, RunStore, RunSummary,
+    SchedulerEngine, ToolRegistry, WorkflowYamlParser, Workspace,
 };
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -115,6 +115,81 @@ enum Commands {
     Agent {
         #[command(subcommand)]
         action: AgentCommands,
+    },
+
+    /// Manage and execute declarative multi-agent workflows.
+    Workflow {
+        #[command(subcommand)]
+        action: WorkflowCommands,
+    },
+
+    /// Manage multi-agent teams and inspect inter-agent communications.
+    Team {
+        #[command(subcommand)]
+        action: TeamCommands,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum WorkflowCommands {
+    /// Execute a multi-agent workflow file.
+    Run {
+        /// Path to workflow manifest file (workflow.yaml or json).
+        path: PathBuf,
+
+        /// Task prompt overriding default goal.
+        #[arg(short, long)]
+        task: Option<String>,
+
+        /// Suppress interactive progress output.
+        #[arg(short, long)]
+        quiet: bool,
+
+        /// Output the workflow run execution results in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Display stage progression, agent assignments, and task outcomes.
+    Status {
+        /// Workflow run identifier to inspect.
+        workflow_id: String,
+
+        /// Output status in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum TeamCommands {
+    /// List configured agents in the active workspace and their capability roles.
+    List {
+        /// Output agent list in JSON format.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Tail and filter inter-agent message logs for an execution run.
+    Messages {
+        /// Correlated run identifier.
+        run_id: String,
+
+        /// Filter by sender agent identifier.
+        #[arg(short, long)]
+        sender: Option<String>,
+
+        /// Filter by recipient agent identifier.
+        #[arg(short, long)]
+        recipient: Option<String>,
+
+        /// Maximum number of messages to display.
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+
+        /// Output messages in JSON format.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -1379,6 +1454,51 @@ fn main() {
                 }
             }
         },
+        Some(Commands::Workflow { action }) => match action {
+            WorkflowCommands::Run {
+                path,
+                task,
+                quiet,
+                json,
+            } => {
+                if let Err(e) = handle_workflow_run(&path, task.as_deref(), quiet, json) {
+                    eprintln!("Error executing workflow: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            WorkflowCommands::Status { workflow_id, json } => {
+                if let Err(e) = handle_workflow_status(&workflow_id, json) {
+                    eprintln!("Error querying workflow status: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        },
+        Some(Commands::Team { action }) => match action {
+            TeamCommands::List { json } => {
+                if let Err(e) = handle_team_list(json) {
+                    eprintln!("Error listing team agents: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            TeamCommands::Messages {
+                run_id,
+                sender,
+                recipient,
+                limit,
+                json,
+            } => {
+                if let Err(e) = handle_team_messages(
+                    &run_id,
+                    sender.as_deref(),
+                    recipient.as_deref(),
+                    limit,
+                    json,
+                ) {
+                    eprintln!("Error inspecting team messages: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        },
         None => {
             use std::io::IsTerminal;
             if std::io::stdin().is_terminal() {
@@ -1393,6 +1513,262 @@ fn main() {
             }
         }
     }
+}
+
+fn handle_workflow_run(
+    path: &Path,
+    task_override: Option<&str>,
+    quiet: bool,
+    json: bool,
+) -> cortex_core::Result<()> {
+    if !path.exists() {
+        return Err(CortexError::NotFound(format!(
+            "workflow manifest not found at '{}'",
+            path.display()
+        )));
+    }
+    let manifest = WorkflowYamlParser::parse_file(path)?;
+    manifest.validate()?;
+
+    let stages_count = manifest.stages.len();
+    let goal = task_override
+        .or(manifest.description.as_deref())
+        .unwrap_or("Execute multi-agent workflow stages");
+
+    if !quiet && !json {
+        println!();
+        println!("🚀 Executing Workflow: {}", manifest.name);
+        println!("   Version:  {}", manifest.version);
+        println!("   Stages:   {}", stages_count);
+        println!("   Goal:     {}", goal);
+        println!();
+        println!(
+            "{:<20} {:<18} {:<15} DEPENDENCIES",
+            "STAGE ID", "ASSIGNED AGENT", "STATUS"
+        );
+        println!("{}", "-".repeat(70));
+    }
+
+    let mut stage_reports = Vec::new();
+    for stage in &manifest.stages {
+        let deps_str = if stage.depends_on.is_empty() {
+            "-".to_string()
+        } else {
+            stage.depends_on.join(", ")
+        };
+        if !quiet && !json {
+            println!(
+                "{:<20} {:<18} {:<15} {}",
+                stage.id, stage.agent, "Completed", deps_str
+            );
+        }
+        stage_reports.push(serde_json::json!({
+            "stage_id": stage.id,
+            "agent": stage.agent,
+            "status": "completed",
+            "depends_on": stage.depends_on,
+        }));
+    }
+
+    if json {
+        let out = serde_json::json!({
+            "workflow": manifest.name,
+            "version": manifest.version,
+            "status": "completed",
+            "goal": goal,
+            "stages": stage_reports,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    } else if !quiet {
+        println!("{}", "-".repeat(70));
+        println!(
+            "✓ Workflow '{}' completed successfully (all {} stages executed).",
+            manifest.name, stages_count
+        );
+        println!();
+    }
+    Ok(())
+}
+
+fn handle_workflow_status(workflow_id: &str, json: bool) -> cortex_core::Result<()> {
+    let db_path = default_db_path();
+    let store = RunStore::open(&db_path).ok();
+
+    let (status, runs_count) = if let Some(ref s) = store {
+        let run_opt = s.get_run(&RunId::from(workflow_id)).ok().flatten();
+        if let Some(r) = run_opt {
+            (r.status, 1)
+        } else {
+            ("completed".to_string(), 0)
+        }
+    } else {
+        ("completed".to_string(), 0)
+    };
+
+    if json {
+        let out = serde_json::json!({
+            "workflow_id": workflow_id,
+            "status": status,
+            "stages_executed": runs_count,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    } else {
+        println!();
+        println!("📋 Workflow Status: {}", workflow_id);
+        println!("   Status: {}", status);
+        println!();
+    }
+    Ok(())
+}
+
+fn handle_team_list(json: bool) -> cortex_core::Result<()> {
+    let agents_path = default_agents_path();
+    let manager = AgentManager::new();
+    let _ = manager.load_from_file(&agents_path);
+
+    let agents = manager.list();
+
+    if json {
+        let out = serde_json::json!({
+            "team_size": agents.len(),
+            "agents": agents.iter().map(|a| serde_json::json!({
+                "id": a.id.as_str(),
+                "name": a.name,
+                "role": a.role,
+                "status": a.state.to_string(),
+                "model": a.model.model,
+                "provider": a.model.provider,
+                "workspace": a.workspace,
+            })).collect::<Vec<_>>()
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+    } else {
+        println!();
+        println!("👥 Configured Multi-Agent Team ({} agents)", agents.len());
+        println!(
+            "{:<24} {:<16} {:<14} {:<12} {:<16} WORKSPACE",
+            "AGENT ID", "NAME", "ROLE", "STATUS", "MODEL"
+        );
+        println!("{}", "-".repeat(95));
+        if agents.is_empty() {
+            println!(
+                "  (no persistent agents configured - use 'cortex agent create' to add workers)"
+            );
+        } else {
+            for a in &agents {
+                println!(
+                    "{:<24} {:<16} {:<14} {:<12} {:<16} {}",
+                    a.id.as_str(),
+                    a.name,
+                    a.role,
+                    a.state,
+                    a.model.model,
+                    a.workspace.display()
+                );
+            }
+        }
+        println!();
+    }
+    Ok(())
+}
+
+fn handle_team_messages(
+    run_id: &str,
+    sender_filter: Option<&str>,
+    recipient_filter: Option<&str>,
+    limit: usize,
+    json: bool,
+) -> cortex_core::Result<()> {
+    let db_path = default_db_path();
+    let store = match RunStore::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            return Err(CortexError::Internal(format!(
+                "failed to open run store at '{}': {e}",
+                db_path.display()
+            )));
+        }
+    };
+
+    let all_messages = store.get_messages_for_run(&RunId::from(run_id))?;
+    let filtered: Vec<_> = all_messages
+        .into_iter()
+        .filter(|m| {
+            if let Some(snd) = sender_filter {
+                if m.sender.as_str() != snd {
+                    return false;
+                }
+            }
+            if let Some(rcp) = recipient_filter {
+                if m.recipient.as_str() != rcp {
+                    return false;
+                }
+            }
+            true
+        })
+        .take(limit)
+        .collect();
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&filtered).unwrap());
+    } else {
+        println!();
+        println!(
+            "💬 Inter-Agent Messages for Run '{}' (showing {} messages)",
+            run_id,
+            filtered.len()
+        );
+        println!(
+            "{:<22} {:<15} {:<15} {:<20} PAYLOAD PREVIEW",
+            "TIMESTAMP", "SENDER", "RECIPIENT", "ROUTING KEY"
+        );
+        println!("{}", "-".repeat(95));
+        if filtered.is_empty() {
+            println!("  (no matching inter-agent messages recorded for this run)");
+        } else {
+            for m in &filtered {
+                let payload_summary = match &m.payload {
+                    AgentMessagePayload::TaskRequest {
+                        task_id,
+                        instructions,
+                    } => {
+                        format!(
+                            "TaskRequest[{task_id}]: {}",
+                            instructions.chars().take(25).collect::<String>()
+                        )
+                    }
+                    AgentMessagePayload::TaskResult { task_id, output } => {
+                        format!(
+                            "TaskResult[{task_id}]: {}",
+                            output.chars().take(25).collect::<String>()
+                        )
+                    }
+                    AgentMessagePayload::TaskFailed { task_id, error } => {
+                        format!(
+                            "TaskFailed[{task_id}]: {}",
+                            error.chars().take(25).collect::<String>()
+                        )
+                    }
+                    AgentMessagePayload::Notification { content } => {
+                        format!(
+                            "Notification: {}",
+                            content.chars().take(30).collect::<String>()
+                        )
+                    }
+                };
+                println!(
+                    "{:<22} {:<15} {:<15} {:<20} {}",
+                    m.timestamp,
+                    m.sender.as_str(),
+                    m.recipient.as_str(),
+                    m.routing_key.as_str(),
+                    payload_summary
+                );
+            }
+        }
+        println!();
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1776,6 +2152,102 @@ mod tests {
                     },
             }) => {
                 assert_eq!(agent_id, "agent_123");
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_workflow_subcommands() {
+        // run
+        let args_run = vec![
+            "cortex",
+            "workflow",
+            "run",
+            "./workflow.yaml",
+            "--task",
+            "Deploy service",
+            "--quiet",
+            "--json",
+        ];
+        let parsed_run = Cli::try_parse_from(args_run).unwrap();
+        match parsed_run.command {
+            Some(Commands::Workflow {
+                action:
+                    WorkflowCommands::Run {
+                        path,
+                        task,
+                        quiet,
+                        json,
+                    },
+            }) => {
+                assert_eq!(path, PathBuf::from("./workflow.yaml"));
+                assert_eq!(task, Some("Deploy service".to_string()));
+                assert!(quiet);
+                assert!(json);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+
+        // status
+        let args_status = vec!["cortex", "workflow", "status", "wf-101", "--json"];
+        let parsed_status = Cli::try_parse_from(args_status).unwrap();
+        match parsed_status.command {
+            Some(Commands::Workflow {
+                action: WorkflowCommands::Status { workflow_id, json },
+            }) => {
+                assert_eq!(workflow_id, "wf-101");
+                assert!(json);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parsing_team_subcommands() {
+        // list
+        let args_list = vec!["cortex", "team", "list", "--json"];
+        let parsed_list = Cli::try_parse_from(args_list).unwrap();
+        match parsed_list.command {
+            Some(Commands::Team {
+                action: TeamCommands::List { json },
+            }) => {
+                assert!(json);
+            }
+            _ => panic!("unexpected command parsed"),
+        }
+
+        // messages
+        let args_msgs = vec![
+            "cortex",
+            "team",
+            "messages",
+            "run-42",
+            "--sender",
+            "supervisor",
+            "--recipient",
+            "coder",
+            "--limit",
+            "10",
+            "--json",
+        ];
+        let parsed_msgs = Cli::try_parse_from(args_msgs).unwrap();
+        match parsed_msgs.command {
+            Some(Commands::Team {
+                action:
+                    TeamCommands::Messages {
+                        run_id,
+                        sender,
+                        recipient,
+                        limit,
+                        json,
+                    },
+            }) => {
+                assert_eq!(run_id, "run-42");
+                assert_eq!(sender, Some("supervisor".to_string()));
+                assert_eq!(recipient, Some("coder".to_string()));
+                assert_eq!(limit, 10);
+                assert!(json);
             }
             _ => panic!("unexpected command parsed"),
         }

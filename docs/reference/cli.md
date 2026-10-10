@@ -174,3 +174,50 @@ cortex tui --db /path/to/cortex.db
 ```
 
 See the [TUI Control Plane Guide](../guides/tui.md) for keyboard shortcuts and views.
+
+---
+
+## `cortex workflow`
+
+Manage and execute declarative multi-agent workflows defined in `workflow.yaml`.
+
+```bash
+# Execute a multi-agent workflow file
+cortex workflow run ./workflow.yaml
+
+# Execute with task override and JSON output
+cortex workflow run ./workflow.yaml --task "Fix security vulnerabilities" --json
+
+# Query stage progression and status
+cortex workflow status <workflow-id> [--json]
+```
+
+### Subcommands
+
+| Subcommand | Description | Arguments / Flags |
+|---|---|---|
+| `run` | Execute a multi-agent workflow manifest | `<path>`, `-t, --task <prompt>`, `-q, --quiet`, `--json` |
+| `status` | Query status and stage progression | `<workflow_id>`, `--json` |
+
+---
+
+## `cortex team`
+
+Inspect multi-agent team composition and inter-agent coordination messages.
+
+```bash
+# List configured team members and capability roles
+cortex team list
+cortex team list --json
+
+# Inspect and filter inter-agent message logs for a run
+cortex team messages <run-id>
+cortex team messages <run-id> --sender manager --recipient coder --limit 20 --json
+```
+
+### Subcommands
+
+| Subcommand | Description | Arguments / Flags |
+|---|---|---|
+| `list` | List team agents and capability roles | `--json` (optional) |
+| `messages` | Filter and tail inter-agent message history | `<run_id>`, `-s, --sender <id>`, `-r, --recipient <id>`, `-l, --limit <N>`, `--json` |
