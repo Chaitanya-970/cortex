@@ -220,6 +220,24 @@ impl RunStore {
         Ok(())
     }
 
+    /// Reconcile runs left in 'running' state after an unhandled process termination or crash.
+    pub fn reconcile_crashed_runs(&self, error_message: &str) -> Result<usize> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| CortexError::Internal("failed to acquire store lock".to_string()))?;
+
+        let now = Utc::now().to_rfc3339();
+        let updated = conn
+            .execute(
+                "UPDATE runs SET status = 'failed', finished_at = ?1, error = ?2 WHERE status = 'running'",
+                params![now, error_message],
+            )
+            .map_err(|e| CortexError::Internal(format!("failed to reconcile crashed runs: {}", e)))?;
+
+        Ok(updated)
+    }
+
     /// Record a structured execution event in the event log.
     pub fn record_event(&self, record: &EventRecord) -> Result<()> {
         let conn = self
