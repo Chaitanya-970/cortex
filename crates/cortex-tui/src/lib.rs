@@ -190,4 +190,268 @@ mod tests {
         let res = run_app(&mut terminal, app);
         assert!(res.is_ok());
     }
+
+    #[test]
+    fn test_multi_agent_coordination_headless_rendering_across_terminal_sizes() {
+        use app::{StageStatus, TeamAgentStatus};
+
+        let terminal_sizes = [(160, 50), (120, 40), (80, 24), (60, 20)];
+
+        for (width, height) in terminal_sizes {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).expect("create test terminal");
+            let mut app = App::new(None);
+
+            // Configure team topology with live status badges per Issue #53
+            if let Some(manager) = app
+                .coordination
+                .team_agents
+                .iter_mut()
+                .find(|a| a.id == "manager")
+            {
+                manager.status = TeamAgentStatus::Ready;
+            }
+            if let Some(researcher) = app
+                .coordination
+                .team_agents
+                .iter_mut()
+                .find(|a| a.id == "researcher")
+            {
+                researcher.status = TeamAgentStatus::Running;
+            }
+            if let Some(coder) = app
+                .coordination
+                .team_agents
+                .iter_mut()
+                .find(|a| a.id == "coder")
+            {
+                coder.status = TeamAgentStatus::Ready;
+            }
+            if let Some(reviewer) = app
+                .coordination
+                .team_agents
+                .iter_mut()
+                .find(|a| a.id == "reviewer")
+            {
+                reviewer.status = TeamAgentStatus::Paused;
+            }
+
+            // Configure stages: research (Completed) -> implementation (Running) -> review (Pending)
+            if let Some(s) = app
+                .coordination
+                .pipeline_stages
+                .iter_mut()
+                .find(|s| s.id == "research")
+            {
+                s.status = StageStatus::Completed;
+            }
+            if let Some(s) = app
+                .coordination
+                .pipeline_stages
+                .iter_mut()
+                .find(|s| s.id == "implementation")
+            {
+                s.status = StageStatus::Running;
+            }
+            if let Some(s) = app
+                .coordination
+                .pipeline_stages
+                .iter_mut()
+                .find(|s| s.id == "review")
+            {
+                s.status = StageStatus::Pending;
+            }
+
+            // Record sequenced inter-agent messages
+            app.record_inter_agent_message(
+                "msg-1",
+                "manager",
+                "researcher",
+                "team.research",
+                "10:14:22",
+                "Analyze auth controller tests",
+            );
+            app.record_inter_agent_message(
+                "msg-2",
+                "researcher",
+                "coder",
+                "team.code",
+                "10:14:28",
+                "Found 2 failing mocks in auth_test.rs",
+            );
+            app.record_inter_agent_message(
+                "msg-3",
+                "coder",
+                "reviewer",
+                "team.review",
+                "10:15:02",
+                "Applied patch in auth.rs; please verify",
+            );
+
+            // Ensure viewer is open and draw
+            app.coordination.show_viewer = true;
+            terminal
+                .draw(|f| ui::render(f, &app))
+                .unwrap_or_else(|e| panic!("Failed drawing on {}x{}: {}", width, height, e));
+
+            // Verify content present on standard desktop size
+            if width == 120 && height == 40 {
+                let buffer = terminal.backend().buffer().clone();
+                let text: String = buffer.content().iter().map(|c| c.symbol()).collect();
+                assert!(text.contains("Topology"), "Buffer missing Team Topology");
+                assert!(text.contains("manager"), "Buffer missing manager");
+                assert!(text.contains("researcher"), "Buffer missing researcher");
+                assert!(text.contains("coder"), "Buffer missing coder");
+                assert!(text.contains("reviewer"), "Buffer missing reviewer");
+                assert!(text.contains("Pipeline"), "Buffer missing Pipeline");
+                assert!(text.contains("research"), "Buffer missing research stage");
+                assert!(
+                    text.contains("implementation"),
+                    "Buffer missing implementation stage"
+                );
+                assert!(text.contains("review"), "Buffer missing review stage");
+                assert!(text.contains("Analyze auth"), "Buffer missing message 1");
+                assert!(text.contains("Found 2 failing"), "Buffer missing message 2");
+                assert!(text.contains("Applied patch"), "Buffer missing message 3");
+            }
+        }
+    }
+
+    #[test]
+    fn test_multi_agent_filter_controls_and_slash_commands() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = App::new(None);
+        app.record_inter_agent_message(
+            "msg-1",
+            "manager",
+            "researcher",
+            "team.research",
+            "10:14:22",
+            "Analyze auth controller tests",
+        );
+        app.record_inter_agent_message(
+            "msg-2",
+            "researcher",
+            "coder",
+            "team.code",
+            "10:14:28",
+            "Found 2 failing mocks in auth_test.rs",
+        );
+        app.record_inter_agent_message(
+            "msg-3",
+            "coder",
+            "reviewer",
+            "team.review",
+            "10:15:02",
+            "Applied patch in auth.rs; please verify",
+        );
+
+        assert_eq!(app.coordination.filtered_messages().len(), 3);
+
+        // Filter by manager (should match msg-1)
+        app.coordination.agent_filter = Some("manager".to_string());
+        assert_eq!(app.coordination.filtered_messages().len(), 1);
+        assert_eq!(app.coordination.filtered_messages()[0].id, "msg-1");
+
+        // Filter by coder (should match msg-2 and msg-3)
+        app.coordination.agent_filter = Some("coder".to_string());
+        assert_eq!(app.coordination.filtered_messages().len(), 2);
+
+        // Test SlashCommand execution
+        let out = crate::commands::execute_command(
+            &mut app,
+            crate::commands::SlashCommand::Team {
+                args: vec!["filter".to_string(), "reviewer".to_string()],
+            },
+        );
+        assert!(out.contains("reviewer"));
+        assert_eq!(app.coordination.filtered_messages().len(), 1);
+
+        // Test clear filter
+        let out_clear = crate::commands::execute_command(
+            &mut app,
+            crate::commands::SlashCommand::Team {
+                args: vec!["clear".to_string()],
+            },
+        );
+        assert!(out_clear.contains("Cleared"));
+        assert_eq!(app.coordination.filtered_messages().len(), 3);
+
+        // Test keybinding dispatch (Ctrl+M toggles viewer)
+        let prior_show = app.coordination.show_viewer;
+        event::handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('m'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(app.coordination.show_viewer, !prior_show);
+    }
+
+    #[test]
+    fn test_multi_agent_heavy_message_volume_zero_lag() {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("create test terminal");
+        let mut app = App::new(None);
+        app.coordination.show_viewer = true;
+
+        // Ingest 500 messages rapidly
+        let start = std::time::Instant::now();
+        for i in 0..500 {
+            app.record_inter_agent_message(
+                &format!("stress-msg-{}", i),
+                if i % 2 == 0 { "manager" } else { "coder" },
+                if i % 2 == 0 { "coder" } else { "reviewer" },
+                "team.stress",
+                "11:00:00",
+                &format!("stress test payload payload {}", i),
+            );
+        }
+        let ingest_elapsed = start.elapsed();
+        assert!(
+            ingest_elapsed < std::time::Duration::from_millis(150),
+            "Ingestion took too long: {:?}",
+            ingest_elapsed
+        );
+
+        // Render under heavy message volume
+        let render_start = std::time::Instant::now();
+        terminal
+            .draw(|f| ui::render(f, &app))
+            .expect("draw under heavy volume");
+        let render_elapsed = render_start.elapsed();
+
+        assert!(
+            render_elapsed < std::time::Duration::from_millis(200),
+            "Rendering under heavy volume took too long: {:?}",
+            render_elapsed
+        );
+    }
+
+    #[test]
+    fn test_execution_event_inter_agent_message_ingestion_in_poll_chat() {
+        let mut app = App::new(None);
+
+        let event = ExecutionEvent::InterAgentMessage {
+            run_id: RunId::from("coord-run-01"),
+            message_id: "evt-msg-123".to_string(),
+            sender: cortex_core::AgentId::from("manager"),
+            recipient: cortex_core::AgentId::from("researcher"),
+            routing_key: "team.research".to_string(),
+            timestamp: "2026-10-10T10:14:22Z".to_string(),
+            payload: serde_json::json!({
+                "instructions": "Investigate security boundary test failures"
+            }),
+        };
+
+        app.events.push(EventRecord::new(1, event));
+        app.poll_chat_updates();
+
+        assert!(app.coordination.show_viewer);
+        assert_eq!(app.coordination.message_feed.len(), 1);
+        let recorded = &app.coordination.message_feed[0];
+        assert_eq!(recorded.id, "evt-msg-123");
+        assert_eq!(recorded.sender, "manager");
+        assert_eq!(recorded.recipient, "researcher");
+        assert!(recorded.content.contains("Investigate security boundary"));
+    }
 }

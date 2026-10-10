@@ -2,7 +2,9 @@
 
 #![allow(dead_code)]
 
-use crate::app::{ActiveTab, App, ChatRole, PortalField, PortalInputMode};
+use crate::app::{
+    ActiveTab, App, ChatRole, PortalField, PortalInputMode, StageStatus, TeamAgentStatus,
+};
 use crate::theme;
 use cortex_core::ExecutionEvent;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -1200,9 +1202,27 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         text_lines.push(Line::from(""));
     }
 
+    let (chat_area, coord_area) = if app.coordination.show_viewer {
+        if area.width >= 100 {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+                .split(chunks[2]);
+            (cols[0], Some(cols[1]))
+        } else {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(chunks[2]);
+            (rows[0], Some(rows[1]))
+        }
+    } else {
+        (chunks[2], None)
+    };
+
     // Dynamic Autoscroll calculation
     let total_lines = text_lines.len();
-    let visible_height = chunks[2].height as usize;
+    let visible_height = chat_area.height as usize;
     let scroll_y = if app.chat_auto_scroll {
         total_lines.saturating_sub(visible_height)
     } else {
@@ -1213,7 +1233,11 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
     let chat_panel = Paragraph::new(text_lines)
         .scroll((scroll_y as u16, 0))
         .wrap(Wrap { trim: false });
-    frame.render_widget(chat_panel, chunks[2]);
+    frame.render_widget(chat_panel, chat_area);
+
+    if let Some(target_area) = coord_area {
+        render_multi_agent_coordination(frame, app, target_area);
+    }
 
     // 3. Prompt input line: > [input text with cursor]
     let cursor_pos = app.chat_cursor.min(app.chat_input.len());
@@ -1343,6 +1367,250 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
         ),
     ]);
     frame.render_widget(Paragraph::new(status_line), chunks[4]);
+}
+
+/// Render the multi-agent coordination viewer, team topology, workflow DAG pipeline,
+/// and live inter-agent message feed.
+pub fn render_multi_agent_coordination(frame: &mut Frame, app: &App, area: Rect) {
+    if area.width < 10 || area.height < 6 {
+        return;
+    }
+
+    // Allocate vertical space for Topology, DAG Pipeline, and Message Stream
+    let (h_topo, h_dag) = if area.height >= 26 {
+        (7, 6)
+    } else if area.height >= 18 {
+        (6, 5)
+    } else if area.height >= 12 {
+        (5, 4)
+    } else {
+        (3, 3)
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(h_topo),
+            Constraint::Length(h_dag),
+            Constraint::Min(4),
+        ])
+        .split(area);
+
+    // 1. Team Topology Block
+    let topo_block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(theme::DASHED_INPUT_SET)
+        .border_style(Style::default().fg(theme::COLOR_PRIMARY))
+        .title(" ◈ Team Topology ")
+        .title_style(
+            Style::default()
+                .fg(theme::COLOR_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let mut topo_lines: Vec<Line> = Vec::new();
+    if area.width >= 45 {
+        for agent in &app.coordination.team_agents {
+            let (badge, color) = match agent.status {
+                TeamAgentStatus::Ready => ("● Ready", theme::COLOR_SUCCESS),
+                TeamAgentStatus::Running => ("⚙ Running", theme::COLOR_SECONDARY),
+                TeamAgentStatus::Paused => ("⏸ Paused", theme::COLOR_MUTED),
+                TeamAgentStatus::Failed => ("✗ Failed", theme::COLOR_ERROR),
+            };
+            topo_lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("{:<11} ", agent.id),
+                    Style::default()
+                        .fg(theme::COLOR_FG)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("({:<11}) ", agent.role),
+                    Style::default().fg(theme::COLOR_MUTED),
+                ),
+                Span::styled(
+                    badge,
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+    } else {
+        // Compact representation for narrow terminals
+        let mut row_spans: Vec<Span> = vec![Span::raw(" ")];
+        for (i, agent) in app.coordination.team_agents.iter().enumerate() {
+            if i > 0 && i % 2 == 0 {
+                topo_lines.push(Line::from(row_spans));
+                row_spans = vec![Span::raw(" ")];
+            }
+            let color = match agent.status {
+                TeamAgentStatus::Ready => theme::COLOR_SUCCESS,
+                TeamAgentStatus::Running => theme::COLOR_SECONDARY,
+                TeamAgentStatus::Paused => theme::COLOR_MUTED,
+                TeamAgentStatus::Failed => theme::COLOR_ERROR,
+            };
+            row_spans.push(Span::styled(
+                format!("{} ", agent.id),
+                Style::default().fg(theme::COLOR_FG),
+            ));
+            row_spans.push(Span::styled(
+                format!("{} ", agent.status.badge()),
+                Style::default().fg(color),
+            ));
+        }
+        if !row_spans.is_empty() {
+            topo_lines.push(Line::from(row_spans));
+        }
+    }
+
+    frame.render_widget(Paragraph::new(topo_lines).block(topo_block), chunks[0]);
+
+    // 2. Task Pipeline / DAG View
+    let dag_block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(theme::DASHED_INPUT_SET)
+        .border_style(Style::default().fg(theme::COLOR_SECONDARY))
+        .title(" ◈ Task Pipeline (DAG) ")
+        .title_style(
+            Style::default()
+                .fg(theme::COLOR_SECONDARY)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let mut dag_lines: Vec<Line> = Vec::new();
+    if area.width >= 55 {
+        let mut pipeline_spans: Vec<Span> = vec![Span::raw("  ")];
+        for (i, stage) in app.coordination.pipeline_stages.iter().enumerate() {
+            if i > 0 {
+                pipeline_spans.push(Span::styled(
+                    " ──▶ ",
+                    Style::default().fg(theme::COLOR_SECONDARY),
+                ));
+            }
+            let (glyph, col) = match stage.status {
+                StageStatus::Completed => ("✓", theme::COLOR_SUCCESS),
+                StageStatus::Running => ("⚙", theme::COLOR_SECONDARY),
+                StageStatus::Pending => ("·", theme::COLOR_MUTED),
+                StageStatus::Failed => ("✗", theme::COLOR_ERROR),
+            };
+            pipeline_spans.push(Span::styled(
+                format!("[{}] ", glyph),
+                Style::default().fg(col).add_modifier(Modifier::BOLD),
+            ));
+            pipeline_spans.push(Span::styled(
+                &stage.id,
+                Style::default()
+                    .fg(theme::COLOR_FG)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            pipeline_spans.push(Span::styled(
+                format!(" ({})", stage.agent),
+                Style::default().fg(theme::COLOR_MUTED),
+            ));
+        }
+        dag_lines.push(Line::from(pipeline_spans));
+    } else {
+        // Vertical or compact DAG display
+        for stage in &app.coordination.pipeline_stages {
+            let (glyph, col) = match stage.status {
+                StageStatus::Completed => ("✓", theme::COLOR_SUCCESS),
+                StageStatus::Running => ("⚙", theme::COLOR_SECONDARY),
+                StageStatus::Pending => ("·", theme::COLOR_MUTED),
+                StageStatus::Failed => ("✗", theme::COLOR_ERROR),
+            };
+            dag_lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("[{}] ", glyph),
+                    Style::default().fg(col).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("{:<14} ", stage.id),
+                    Style::default().fg(theme::COLOR_FG),
+                ),
+                Span::styled(
+                    format!("({})", stage.agent),
+                    Style::default().fg(theme::COLOR_MUTED),
+                ),
+            ]));
+        }
+    }
+
+    frame.render_widget(Paragraph::new(dag_lines).block(dag_block), chunks[1]);
+
+    // 3. Inter-Agent Message Feed
+    let filter_label = match (
+        &app.coordination.agent_filter,
+        &app.coordination.stage_filter,
+    ) {
+        (Some(a), Some(s)) => format!(" [Filter: {} / {}] ", a, s),
+        (Some(a), None) => format!(" [Filter: {}] ", a),
+        (None, Some(s)) => format!(" [Filter: {}] ", s),
+        (None, None) => " [Filter: All] ".to_string(),
+    };
+
+    let feed_block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(theme::DASHED_INPUT_SET)
+        .border_style(Style::default().fg(theme::COLOR_PRIMARY))
+        .title(format!(" ◈ Inter-Agent Message Feed{} ", filter_label))
+        .title_style(
+            Style::default()
+                .fg(theme::COLOR_PRIMARY)
+                .add_modifier(Modifier::BOLD),
+        );
+
+    let filtered = app.coordination.filtered_messages();
+    let mut feed_lines: Vec<Line> = Vec::new();
+
+    if filtered.is_empty() {
+        feed_lines.push(Line::from(""));
+        feed_lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                "Waiting for inter-agent messages...",
+                Style::default().fg(theme::COLOR_MUTED),
+            ),
+        ]));
+    } else {
+        for msg in &filtered {
+            feed_lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  [{}] ", msg.timestamp),
+                    Style::default().fg(theme::COLOR_MUTED),
+                ),
+                Span::styled(
+                    &msg.sender,
+                    Style::default()
+                        .fg(theme::COLOR_PRIMARY)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" → ", Style::default().fg(theme::COLOR_SECONDARY)),
+                Span::styled(
+                    &msg.recipient,
+                    Style::default()
+                        .fg(theme::COLOR_ACCENT)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(": \"{}\"", msg.content),
+                    Style::default().fg(theme::COLOR_FG),
+                ),
+            ]));
+        }
+    }
+
+    // Scroll calculation
+    let visible_feed_height = chunks[2].height.saturating_sub(2) as usize;
+    let total_feed_lines = feed_lines.len();
+    let scroll_y = total_feed_lines.saturating_sub(visible_feed_height);
+
+    let feed_widget = Paragraph::new(feed_lines)
+        .block(feed_block)
+        .scroll((scroll_y as u16, 0))
+        .wrap(Wrap { trim: false });
+
+    frame.render_widget(feed_widget, chunks[2]);
 }
 
 fn render_portals(frame: &mut Frame, app: &App, area: Rect) {

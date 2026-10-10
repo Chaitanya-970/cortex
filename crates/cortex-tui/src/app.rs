@@ -1,6 +1,6 @@
 //! Application state management and navigation model for the Cortex TUI.
 
-use cortex_core::EventRecord;
+use cortex_core::{EventRecord, ExecutionEvent};
 use cortex_harness::suite::get_suite_tasks;
 use cortex_harness::task::BenchmarkTask;
 use cortex_runtime::agent::{AgentContext, AgentLoop, AgentRunResult, CancellationToken};
@@ -326,6 +326,308 @@ pub enum ChatAgentUpdate {
     Cancelled(String),
     /// Agent encountered a fatal error.
     Error(String),
+    /// Inter-agent message event during multi-agent collaboration.
+    InterAgentMessage {
+        /// Message identifier.
+        message_id: String,
+        /// Sending agent identifier.
+        sender: String,
+        /// Receiving agent identifier.
+        recipient: String,
+        /// Exact routing key.
+        routing_key: String,
+        /// Event timestamp.
+        timestamp: String,
+        /// Human-readable payload preview.
+        payload_preview: String,
+    },
+}
+
+/// Status badge and lifecycle state for a team agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TeamAgentStatus {
+    /// Agent is idle and available to receive delegations.
+    Ready,
+    /// Agent is currently processing a delegated task.
+    Running,
+    /// Agent has been temporarily paused by operator.
+    Paused,
+    /// Agent encountered an error or failed.
+    Failed,
+}
+
+impl TeamAgentStatus {
+    /// Return live status badge string per Issue #53.
+    pub fn badge(&self) -> &'static str {
+        match self {
+            TeamAgentStatus::Ready => "● Ready",
+            TeamAgentStatus::Running => "⚙ Running",
+            TeamAgentStatus::Paused => "⏸ Paused",
+            TeamAgentStatus::Failed => "✗ Failed",
+        }
+    }
+}
+
+/// Agent member in a multi-agent team topology block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamAgent {
+    /// Unique agent identifier.
+    pub id: String,
+    /// Agent display name.
+    pub name: String,
+    /// Agent team role (e.g. supervisor, specialist).
+    pub role: String,
+    /// Live execution status badge.
+    pub status: TeamAgentStatus,
+}
+
+/// Status of a workflow stage in the DAG pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StageStatus {
+    /// Stage has not started yet.
+    Pending,
+    /// Stage is currently executing.
+    Running,
+    /// Stage has completed successfully.
+    Completed,
+    /// Stage failed during execution.
+    Failed,
+}
+
+impl StageStatus {
+    /// Return concise status glyph.
+    pub fn glyph(&self) -> &'static str {
+        match self {
+            StageStatus::Pending => "·",
+            StageStatus::Running => "⚙",
+            StageStatus::Completed => "✓",
+            StageStatus::Failed => "✗",
+        }
+    }
+}
+
+/// Stage in a multi-agent workflow DAG pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowStage {
+    /// Unique stage identifier.
+    pub id: String,
+    /// Assigned agent identifier.
+    pub agent: String,
+    /// Live stage status.
+    pub status: StageStatus,
+}
+
+/// Routed inter-agent message item in the live stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterAgentMessageItem {
+    /// Message identifier.
+    pub id: String,
+    /// Formatted timestamp (e.g. "10:14:22").
+    pub timestamp: String,
+    /// Sending agent.
+    pub sender: String,
+    /// Receiving agent.
+    pub recipient: String,
+    /// Topic or routing key.
+    pub routing_key: String,
+    /// Content or instruction text.
+    pub content: String,
+}
+
+/// State tracking multi-agent coordination, topology, pipeline, and message feed.
+#[derive(Debug, Clone)]
+pub struct MultiAgentCoordination {
+    /// Registered team agents (manager, researcher, coder, reviewer).
+    pub team_agents: Vec<TeamAgent>,
+    /// Workflow stages in pipeline DAG order (research -> implementation -> review).
+    pub pipeline_stages: Vec<WorkflowStage>,
+    /// Live inter-agent routed message timeline.
+    pub message_feed: Vec<InterAgentMessageItem>,
+    /// Whether the multi-agent coordination viewer is displayed.
+    pub show_viewer: bool,
+    /// Selected agent filter for message feed (None = All).
+    pub agent_filter: Option<String>,
+    /// Selected stage filter for message feed (None = All).
+    pub stage_filter: Option<String>,
+    /// Scroll offset within the inter-agent message feed.
+    pub feed_scroll: usize,
+}
+
+impl Default for MultiAgentCoordination {
+    fn default() -> Self {
+        Self {
+            team_agents: vec![
+                TeamAgent {
+                    id: "manager".to_string(),
+                    name: "Manager".to_string(),
+                    role: "supervisor".to_string(),
+                    status: TeamAgentStatus::Ready,
+                },
+                TeamAgent {
+                    id: "researcher".to_string(),
+                    name: "Researcher".to_string(),
+                    role: "specialist".to_string(),
+                    status: TeamAgentStatus::Ready,
+                },
+                TeamAgent {
+                    id: "coder".to_string(),
+                    name: "Coder".to_string(),
+                    role: "specialist".to_string(),
+                    status: TeamAgentStatus::Ready,
+                },
+                TeamAgent {
+                    id: "reviewer".to_string(),
+                    name: "Reviewer".to_string(),
+                    role: "specialist".to_string(),
+                    status: TeamAgentStatus::Ready,
+                },
+            ],
+            pipeline_stages: vec![
+                WorkflowStage {
+                    id: "research".to_string(),
+                    agent: "researcher".to_string(),
+                    status: StageStatus::Pending,
+                },
+                WorkflowStage {
+                    id: "implementation".to_string(),
+                    agent: "coder".to_string(),
+                    status: StageStatus::Pending,
+                },
+                WorkflowStage {
+                    id: "review".to_string(),
+                    agent: "reviewer".to_string(),
+                    status: StageStatus::Pending,
+                },
+            ],
+            message_feed: Vec::new(),
+            show_viewer: false,
+            agent_filter: None,
+            stage_filter: None,
+            feed_scroll: 0,
+        }
+    }
+}
+
+impl MultiAgentCoordination {
+    /// Record a routed inter-agent message, capping queue depth to prevent memory leaks.
+    pub fn record_message(&mut self, item: InterAgentMessageItem) {
+        // Update agent status based on interaction
+        for agent in &mut self.team_agents {
+            if agent.id == item.recipient {
+                agent.status = TeamAgentStatus::Running;
+            } else if agent.id == item.sender && agent.status == TeamAgentStatus::Running {
+                agent.status = TeamAgentStatus::Ready;
+            }
+        }
+
+        // Update pipeline stages based on messages
+        let content_lower = item.content.to_lowercase();
+        if item.sender == "researcher"
+            || content_lower.contains("failing")
+            || content_lower.contains("research")
+        {
+            if let Some(stage) = self.pipeline_stages.iter_mut().find(|s| s.id == "research") {
+                stage.status = StageStatus::Completed;
+            }
+            if let Some(stage) = self
+                .pipeline_stages
+                .iter_mut()
+                .find(|s| s.id == "implementation")
+            {
+                if stage.status == StageStatus::Pending {
+                    stage.status = StageStatus::Running;
+                }
+            }
+        }
+        if item.sender == "coder"
+            || content_lower.contains("patch")
+            || content_lower.contains("implement")
+        {
+            if let Some(stage) = self
+                .pipeline_stages
+                .iter_mut()
+                .find(|s| s.id == "implementation")
+            {
+                stage.status = StageStatus::Completed;
+            }
+            if let Some(stage) = self.pipeline_stages.iter_mut().find(|s| s.id == "review") {
+                if stage.status == StageStatus::Pending {
+                    stage.status = StageStatus::Running;
+                }
+            }
+        }
+        if item.sender == "reviewer"
+            || content_lower.contains("verify")
+            || content_lower.contains("lgtm")
+            || content_lower.contains("approved")
+        {
+            if let Some(stage) = self.pipeline_stages.iter_mut().find(|s| s.id == "review") {
+                stage.status = StageStatus::Completed;
+            }
+            for agent in &mut self.team_agents {
+                if agent.status == TeamAgentStatus::Running {
+                    agent.status = TeamAgentStatus::Ready;
+                }
+            }
+        }
+
+        if self.message_feed.len() >= 1000 {
+            self.message_feed.remove(0);
+        }
+        self.message_feed.push(item);
+    }
+
+    /// Cycle through active agent filters: None -> manager -> researcher -> coder -> reviewer -> None
+    pub fn cycle_agent_filter(&mut self) {
+        let agents = ["manager", "researcher", "coder", "reviewer"];
+        self.agent_filter = match &self.agent_filter {
+            None => Some(agents[0].to_string()),
+            Some(curr) => {
+                let idx = agents.iter().position(|a| a == curr);
+                match idx {
+                    Some(i) if i + 1 < agents.len() => Some(agents[i + 1].to_string()),
+                    _ => None,
+                }
+            }
+        };
+    }
+
+    /// Cycle through stage filters: None -> research -> implementation -> review -> None
+    pub fn cycle_stage_filter(&mut self) {
+        let stages = ["research", "implementation", "review"];
+        self.stage_filter = match &self.stage_filter {
+            None => Some(stages[0].to_string()),
+            Some(curr) => {
+                let idx = stages.iter().position(|s| s == curr);
+                match idx {
+                    Some(i) if i + 1 < stages.len() => Some(stages[i + 1].to_string()),
+                    _ => None,
+                }
+            }
+        };
+    }
+
+    /// Return filtered references to messages based on active filters.
+    pub fn filtered_messages(&self) -> Vec<&InterAgentMessageItem> {
+        self.message_feed
+            .iter()
+            .filter(|msg| {
+                if let Some(agent) = &self.agent_filter {
+                    if &msg.sender != agent && &msg.recipient != agent {
+                        return false;
+                    }
+                }
+                if let Some(stage) = &self.stage_filter {
+                    let routing = &msg.routing_key;
+                    let content = &msg.content;
+                    if !routing.contains(stage) && !content.to_lowercase().contains(stage) {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect()
+    }
 }
 
 /// Floating autocomplete popup state for slash commands.
@@ -466,6 +768,10 @@ pub struct App {
     pub autocomplete_state: AutocompleteState,
     /// Background workspace indexer.
     pub indexer: crate::indexer::BackgroundIndexer,
+
+    // Multi-Agent Coordination
+    /// Live multi-agent team coordination, topology, DAG pipeline, and message feed.
+    pub coordination: MultiAgentCoordination,
 }
 
 impl App {
@@ -561,6 +867,7 @@ impl App {
                 idx.start_indexing(ws_buf);
                 idx
             },
+            coordination: MultiAgentCoordination::default(),
         };
 
         // Ensure user settings file exists in ~/.cortex
@@ -1339,9 +1646,57 @@ impl App {
                         });
                         finished = true;
                     }
+                    ChatAgentUpdate::InterAgentMessage {
+                        message_id,
+                        sender,
+                        recipient,
+                        routing_key,
+                        timestamp,
+                        payload_preview,
+                    } => {
+                        let ts = if timestamp.len() >= 8 {
+                            timestamp.clone()
+                        } else {
+                            now.clone()
+                        };
+                        let msg = InterAgentMessageItem {
+                            id: message_id,
+                            timestamp: ts.clone(),
+                            sender: sender.clone(),
+                            recipient: recipient.clone(),
+                            routing_key,
+                            content: payload_preview.clone(),
+                        };
+                        self.coordination.record_message(msg);
+                        self.coordination.show_viewer = true;
+                        self.chat_messages.push(ChatMessageItem {
+                            role: ChatRole::System,
+                            content: format!(
+                                "[{}] {} → {}: \"{}\"",
+                                ts, sender, recipient, payload_preview
+                            ),
+                            timestamp: now.clone(),
+                            is_expanded: false,
+                        });
+                    }
                 }
             }
         }
+
+        // Ingest any execution events from the active run event store
+        let start_seq = self.chat_last_event_seq as usize;
+        let new_events: Vec<ExecutionEvent> = if start_seq < self.events.len() {
+            self.events[start_seq..]
+                .iter()
+                .map(|r| r.event.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        for event in new_events {
+            self.ingest_execution_event(&event);
+        }
+        self.chat_last_event_seq = self.events.len() as u64;
 
         if finished {
             self.chat_handle = None;
@@ -1349,6 +1704,90 @@ impl App {
             self.refresh();
         } else if new_run_id.is_some() {
             self.refresh();
+        }
+    }
+
+    /// Record an inter-agent routed message into live coordination state.
+    pub fn record_inter_agent_message(
+        &mut self,
+        message_id: &str,
+        sender: &str,
+        recipient: &str,
+        routing_key: &str,
+        timestamp: &str,
+        payload_preview: &str,
+    ) {
+        let msg = InterAgentMessageItem {
+            id: message_id.to_string(),
+            timestamp: if timestamp.len() >= 8 && timestamp.contains(':') {
+                timestamp.to_string()
+            } else {
+                chrono::Utc::now().format("%H:%M:%S").to_string()
+            },
+            sender: sender.to_string(),
+            recipient: recipient.to_string(),
+            routing_key: routing_key.to_string(),
+            content: payload_preview.to_string(),
+        };
+        self.coordination.record_message(msg);
+        self.coordination.show_viewer = true;
+    }
+
+    /// Toggle visibility of the multi-agent coordination viewer.
+    pub fn toggle_coordination_panel(&mut self) {
+        self.coordination.show_viewer = !self.coordination.show_viewer;
+    }
+
+    /// Cycle agent filter in coordination viewer.
+    pub fn cycle_coordination_filter(&mut self) {
+        self.coordination.cycle_agent_filter();
+    }
+
+    /// Cycle stage filter in coordination viewer.
+    pub fn cycle_stage_filter(&mut self) {
+        self.coordination.cycle_stage_filter();
+    }
+
+    /// Ingest an ExecutionEvent to update coordination state if applicable.
+    pub fn ingest_execution_event(&mut self, event: &ExecutionEvent) {
+        if let ExecutionEvent::InterAgentMessage {
+            message_id,
+            sender,
+            recipient,
+            routing_key,
+            timestamp,
+            payload,
+            ..
+        } = event
+        {
+            let preview = match payload {
+                serde_json::Value::Object(map) => {
+                    if let Some(instructions) = map.get("instructions").and_then(|v| v.as_str()) {
+                        instructions.to_string()
+                    } else if let Some(output) = map.get("output").and_then(|v| v.as_str()) {
+                        output.to_string()
+                    } else if let Some(content) = map.get("content").and_then(|v| v.as_str()) {
+                        content.to_string()
+                    } else {
+                        payload.to_string()
+                    }
+                }
+                serde_json::Value::String(s) => s.clone(),
+                _ => payload.to_string(),
+            };
+            let ts = if timestamp.len() >= 19 {
+                timestamp[11..19].to_string()
+            } else {
+                timestamp.clone()
+            };
+            self.record_inter_agent_message(
+                message_id,
+                sender.as_str(),
+                recipient.as_str(),
+                routing_key,
+                &ts,
+                &preview,
+            );
         }
     }
 

@@ -36,6 +36,18 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
                     app.toggle_tool_calls_expanded();
                     return;
                 }
+                KeyCode::Char('m') | KeyCode::Char('M') => {
+                    app.toggle_coordination_panel();
+                    return;
+                }
+                KeyCode::Char('f') | KeyCode::Char('F') => {
+                    app.cycle_coordination_filter();
+                    return;
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') => {
+                    app.cycle_stage_filter();
+                    return;
+                }
                 KeyCode::Char('u') | KeyCode::Char('U') => {
                     app.chat_input_clear();
                     return;

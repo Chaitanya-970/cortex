@@ -97,6 +97,12 @@ pub static COMMAND_CATALOG: &[CommandDefinition] = &[
         aliases: &["check"],
     },
     CommandDefinition {
+        name: "team",
+        description: "Multi-agent coordination viewer & filters",
+        usage: "/team [toggle|filter <agent>|clear]",
+        aliases: &["coordination", "agents-team"],
+    },
+    CommandDefinition {
         name: "exit",
         description: "Exit interactive agent harness",
         usage: "/exit",
@@ -183,6 +189,11 @@ pub enum SlashCommand {
         /// Target session identifier or prefix.
         id: String,
     },
+    /// Multi-agent team coordination viewer and filters.
+    Team {
+        /// Subcommand arguments.
+        args: Vec<String>,
+    },
     /// Exit the TUI harness.
     Quit,
     /// Unrecognized slash command.
@@ -230,6 +241,7 @@ pub fn parse_command(input: &str) -> Option<SlashCommand> {
             let id = args.first().cloned().unwrap_or_default();
             Some(SlashCommand::Resume { id })
         }
+        "team" | "coordination" => Some(SlashCommand::Team { args }),
         "quit" | "exit" | "q" => Some(SlashCommand::Quit),
         other => Some(SlashCommand::Unknown(other.to_string())),
     }
@@ -257,6 +269,7 @@ pub fn execute_command(app: &mut App, command: SlashCommand) -> String {
         SlashCommand::Compact => handle_compact_command(app),
         SlashCommand::Sessions => handle_sessions_command(),
         SlashCommand::Resume { id } => handle_resume_command(app, &id),
+        SlashCommand::Team { args } => handle_team_command(app, &args),
         SlashCommand::Quit => {
             app.should_quit = true;
             "Exiting Cortex TUI... Goodbye!".to_string()
@@ -988,6 +1001,54 @@ fn handle_thinking_command(app: &mut App, arg: Option<String>) -> String {
                 "✓ Thinking trace view TOGGLED to EXPANDED.".to_string()
             } else {
                 "✓ Thinking trace view TOGGLED to COLLAPSED.".to_string()
+            }
+        }
+    }
+}
+
+fn handle_team_command(app: &mut App, args: &[String]) -> String {
+    match args.first().map(|s| s.to_lowercase()).as_deref() {
+        Some("filter") => {
+            if let Some(target) = args.get(1) {
+                app.coordination.agent_filter = Some(target.clone());
+                app.coordination.show_viewer = true;
+                format!("✓ Filtered inter-agent message feed by agent: '{}'", target)
+            } else {
+                app.coordination.cycle_agent_filter();
+                let f = app.coordination.agent_filter.as_deref().unwrap_or("All");
+                format!("✓ Cycled agent filter to: '{}'", f)
+            }
+        }
+        Some("stage") => {
+            if let Some(target) = args.get(1) {
+                app.coordination.stage_filter = Some(target.clone());
+                app.coordination.show_viewer = true;
+                format!("✓ Filtered inter-agent message feed by stage: '{}'", target)
+            } else {
+                app.coordination.cycle_stage_filter();
+                let s = app.coordination.stage_filter.as_deref().unwrap_or("All");
+                format!("✓ Cycled stage filter to: '{}'", s)
+            }
+        }
+        Some("clear") | Some("reset") => {
+            app.coordination.agent_filter = None;
+            app.coordination.stage_filter = None;
+            "✓ Cleared message stream filters (showing All).".to_string()
+        }
+        Some("hide") | Some("off") => {
+            app.coordination.show_viewer = false;
+            "✓ Multi-agent coordination viewer hidden.".to_string()
+        }
+        Some("show") | Some("on") => {
+            app.coordination.show_viewer = true;
+            "✓ Multi-agent coordination viewer enabled.".to_string()
+        }
+        _ => {
+            app.toggle_coordination_panel();
+            if app.coordination.show_viewer {
+                "✓ Multi-agent coordination viewer toggled ON.".to_string()
+            } else {
+                "✓ Multi-agent coordination viewer toggled OFF.".to_string()
             }
         }
     }
