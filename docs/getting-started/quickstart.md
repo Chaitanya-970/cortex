@@ -106,10 +106,10 @@ cortex runs show <run-id> --verbose
 ```
 
 ### Launch Interactive Terminal UI (TUI)
-Launch the Ratatui-powered control plane to monitor live runs, replay steps, and analyze token costs:
+Simply run `cortex` to launch the Ratatui-powered control plane:
 
 ```bash
-cortex tui
+cortex
 ```
 
 ---

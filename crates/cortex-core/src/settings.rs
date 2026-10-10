@@ -72,7 +72,7 @@ pub struct UserSettings {
     #[serde(default)]
     pub system_prompt: Option<String>,
 
-    /// Active UI theme (e.g. "codex", "claude", "gemini"). Defaults to "codex".
+    /// Active UI theme (e.g. "blue", "codex", "gemini"). Defaults to "blue".
     #[serde(default)]
     pub theme: Option<String>,
 
@@ -102,7 +102,7 @@ impl Default for UserSettings {
             temperature: None,
             max_iterations: default_max_iterations(),
             system_prompt: None,
-            theme: Some("codex".to_string()),
+            theme: Some("blue".to_string()),
             auto_save_sessions: true,
         }
     }

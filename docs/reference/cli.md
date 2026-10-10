@@ -20,7 +20,7 @@ cortex agent pause <id>
 cortex agent stop <id>
 cortex agent inspect <id> [--json]
 
-cortex tui [--db <path>]
+cortex [--db <path>]
 ```
 
 ---
@@ -177,16 +177,16 @@ cortex agent inspect <agent-id> --json
 
 ---
 
-## `cortex tui`
+## Interactive Control Plane (`cortex`)
 
-Launch the interactive terminal control plane (Ratatui) to navigate live and historical runs, inspect traces, and monitor token usage.
+Launch the interactive terminal control plane (Ratatui) to navigate live and historical runs, inspect traces, chat with agents, and monitor token usage. Simply run `cortex`:
 
 ```bash
 # Default database
-cortex tui
+cortex
 
 # Custom database
-cortex tui --db /path/to/cortex.db
+cortex --db /path/to/cortex.db
 ```
 
 See the [TUI Control Plane Guide](../guides/tui.md) for keyboard shortcuts and views.

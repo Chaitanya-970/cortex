@@ -28,10 +28,10 @@ The TUI acts as a completely decoupled observability and inspection interface ov
 
 ## Launching the Control Plane
 
-Launch the TUI from any terminal:
+Launch the interactive control plane directly from any terminal by simply running `cortex`:
 
 ```bash
-cortex tui
+cortex
 ```
 
 ### Custom Database Path
@@ -39,13 +39,13 @@ cortex tui
 To connect to a specific database (e.g. during testing or multi-environment management):
 
 ```bash
-cortex tui --db /path/to/cortex.db
+cortex --db /path/to/cortex.db
 ```
 
 Alternatively, set the `CORTEX_DB_PATH` environment variable:
 
 ```bash
-CORTEX_DB_PATH=/path/to/cortex.db cortex tui
+CORTEX_DB_PATH=/path/to/cortex.db cortex
 ```
 
 ---

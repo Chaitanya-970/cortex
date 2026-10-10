@@ -14,17 +14,75 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 
+mod style {
+    use std::io::IsTerminal;
+
+    pub fn use_color() -> bool {
+        std::io::stdout().is_terminal() && std::env::var("NO_COLOR").is_err()
+    }
+
+    /// Electric Blue (#3b82f6)
+    pub fn blue(s: impl std::fmt::Display) -> String {
+        if use_color() {
+            format!("\x1b[38;2;59;130;246m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+
+    /// Bold Electric Blue (#3b82f6)
+    pub fn bold_blue(s: impl std::fmt::Display) -> String {
+        if use_color() {
+            format!("\x1b[1;38;2;59;130;246m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+
+    /// Sky Cyan (#38bdf8)
+    pub fn cyan(s: impl std::fmt::Display) -> String {
+        if use_color() {
+            format!("\x1b[38;2;56;189;248m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+
+    /// Muted Slate Gray (#64748b)
+    pub fn dim(s: impl std::fmt::Display) -> String {
+        if use_color() {
+            format!("\x1b[38;2;100;116;139m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+
+    /// Emerald Green (#34d399)
+    pub fn green(s: impl std::fmt::Display) -> String {
+        if use_color() {
+            format!("\x1b[38;2;52;211;153m{s}\x1b[0m")
+        } else {
+            s.to_string()
+        }
+    }
+}
+
 /// Cortex - An open-source runtime and harness for autonomous AI workers.
 #[derive(Parser, Debug)]
 #[command(
     name = "cortex",
     author = "Cortex Contributors",
     version = VERSION,
-    about = "An open-source runtime and harness for autonomous AI workers",
+    about = "An open-source runtime and harness for autonomous AI workers. Run 'cortex' directly to launch the interactive TUI.",
     long_about = "Cortex is a runtime and harness for autonomous AI workers, providing sandboxed \
-                  tool execution, persistent agents, execution tracing, and multi-agent coordination."
+                  tool execution, persistent agents, execution tracing, and multi-agent coordination. \
+                  Running 'cortex' without arguments directly launches the interactive terminal control plane (TUI)."
 )]
 struct Cli {
+    /// Optional path to SQLite runs database when launching the interactive control plane.
+    #[arg(long, global = true)]
+    db: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -97,8 +155,8 @@ enum Commands {
         action: BenchCommands,
     },
 
-    /// Launch the interactive terminal control plane (Claude Code / Codex CLI harness).
-    #[command(alias = "dashboard", alias = "chat")]
+    /// Launch the interactive terminal control plane.
+    #[command(alias = "dashboard", alias = "chat", hide = true)]
     Tui {
         /// Optional path to SQLite database.
         #[arg(short, long)]
@@ -960,13 +1018,18 @@ fn execute_run(
     let run_id = context.run_id.clone();
 
     if !quiet && !json {
-        println!("{:=<80}", "");
-        println!("Cortex Autonomous Agent Execution");
-        println!("Run ID:     {}", run_id);
-        println!("Model:      {} ({})", model, provider.descriptor().provider);
-        println!("Workspace:  {}", ws.root().display());
-        println!("Task:       {}", prompt);
-        println!("{:-<80}", "");
+        println!("{}", style::blue(format!("{:=<80}", "")));
+        println!("{}", style::bold_blue("Cortex Autonomous Agent Execution"));
+        println!("{:<12} {}", style::cyan("Run ID:"), run_id);
+        println!(
+            "{:<12} {} ({})",
+            style::cyan("Model:"),
+            style::blue(model),
+            provider.descriptor().provider
+        );
+        println!("{:<12} {}", style::cyan("Workspace:"), ws.root().display());
+        println!("{:<12} {}", style::cyan("Task:"), prompt);
+        println!("{}", style::blue(format!("{:-<80}", "")));
     }
 
     let agent = AgentLoop::new(max_iterations).with_store(store);
@@ -990,31 +1053,53 @@ fn execute_run(
         println!("{}", serde_json::to_string_pretty(&json_output)?);
     } else {
         if !quiet {
-            println!("\n[Final Answer]");
+            println!("\n{}", style::cyan("[Final Answer]"));
         }
         println!("{}", result.final_answer);
         if !quiet {
-            println!("\n{:-<80}", "");
-            println!("Execution Summary:");
+            println!("\n{}", style::blue(format!("{:-<80}", "")));
+            println!("{}", style::bold_blue("Execution Summary:"));
             println!(
-                "  Status:           {}",
+                "  {:<18} {}",
+                style::cyan("Status:"),
                 if result.completed {
-                    "completed"
+                    style::green("completed")
                 } else {
-                    "max iterations reached"
+                    style::dim("max iterations reached")
                 }
             );
-            println!("  Iterations:       {}", result.iterations);
-            println!("  Duration:         {} ms", result.duration_ms);
-            println!("  Tokens (prompt):  {}", result.tokens_prompt);
-            println!("  Tokens (compl):   {}", result.tokens_completion);
-            println!("  Tokens (total):   {}", result.tokens_total);
-            println!("  Estimated Cost:   ${:.6}", result.estimated_cost_usd);
+            println!("  {:<18} {}", style::cyan("Iterations:"), result.iterations);
             println!(
-                "  Inspect Trace:    cortex runs show {} --verbose",
+                "  {:<18} {} ms",
+                style::cyan("Duration:"),
+                result.duration_ms
+            );
+            println!(
+                "  {:<18} {}",
+                style::cyan("Tokens (prompt):"),
+                result.tokens_prompt
+            );
+            println!(
+                "  {:<18} {}",
+                style::cyan("Tokens (compl):"),
+                result.tokens_completion
+            );
+            println!(
+                "  {:<18} {}",
+                style::cyan("Tokens (total):"),
+                result.tokens_total
+            );
+            println!(
+                "  {:<18} ${:.6}",
+                style::cyan("Estimated Cost:"),
+                result.estimated_cost_usd
+            );
+            println!(
+                "  {:<18} cortex runs show {} --verbose",
+                style::cyan("Inspect Trace:"),
                 result.run_id
             );
-            println!("{:=<80}", "");
+            println!("{}", style::blue(format!("{:=<80}", "")));
         }
     }
 
@@ -1213,44 +1298,66 @@ fn main() {
 
     match cli.command {
         Some(Commands::Status) => {
-            println!("Cortex Agent Runtime v{}", VERSION);
-            println!("Status: Workspace & Architecture Bootstrap");
+            println!(
+                "{}",
+                style::bold_blue(format!("Cortex Agent Runtime v{}", VERSION))
+            );
+            println!(
+                "{}: Workspace & Architecture Bootstrap",
+                style::cyan("Status")
+            );
             let settings_file = cortex_core::settings::settings_path();
             println!(
-                "Settings: {} (model: {})",
+                "{}: {} ({}: {})",
+                style::cyan("Settings"),
                 settings_file.display(),
-                settings.model
+                style::dim("model"),
+                style::blue(&settings.model)
             );
             if let Some(url) = &settings.base_url {
-                println!("Base URL: {}", url);
+                println!("{}: {}", style::cyan("Base URL"), url);
             }
             let key_status = if settings.api_key.is_some()
                 || settings.openai_api_key.is_some()
                 || settings.anthropic_api_key.is_some()
             {
-                "Configured"
+                style::green("Configured")
             } else {
-                "Not set"
+                style::dim("Not set")
             };
-            println!("API Key: {}", key_status);
-            println!("Core Interfaces: Loaded (cortex-core, cortex-runtime)");
-            println!("Database: {}", default_db_path().display());
-            println!("Planned Features: See docs/roadmap.md for upcoming milestones");
+            println!("{}: {}", style::cyan("API Key"), key_status);
+            println!(
+                "{}: Loaded (cortex-core, cortex-runtime)",
+                style::cyan("Core Interfaces")
+            );
+            println!(
+                "{}: {}",
+                style::cyan("Database"),
+                default_db_path().display()
+            );
+            println!(
+                "{}: See docs/roadmap.md for upcoming milestones",
+                style::dim("Planned Features")
+            );
         }
         Some(Commands::Check) => {
-            println!("Cortex v{} environment check:", VERSION);
-            println!("  [✓] Workspace crates initialized");
-            println!("  [✓] Architecture traits defined");
+            println!(
+                "{}",
+                style::bold_blue(format!("Cortex v{} environment check:", VERSION))
+            );
+            println!("  [{}] Workspace crates initialized", style::green("✓"));
+            println!("  [{}] Architecture traits defined", style::green("✓"));
             let settings_file = cortex_core::settings::settings_path();
             if settings_file.is_file() {
                 println!(
-                    "  [✓] User settings loaded from {}",
+                    "  [{}] User settings loaded from {}",
+                    style::green("✓"),
                     settings_file.display()
                 );
             } else {
                 println!("  [!] User settings missing at {}", settings_file.display());
             }
-            println!("  [✓] Ready for runtime development");
+            println!("  [{}] Ready for runtime development", style::green("✓"));
         }
         Some(Commands::Run {
             prompt,
@@ -1394,7 +1501,7 @@ fn main() {
             }
         },
         Some(Commands::Tui { db }) => {
-            let db_path = db.unwrap_or_else(default_db_path);
+            let db_path = db.or(cli.db).unwrap_or_else(default_db_path);
             if let Err(e) = cortex_tui::run_tui(&db_path) {
                 eprintln!("Error running TUI control plane: {}", e);
                 std::process::exit(1);
@@ -1500,16 +1607,10 @@ fn main() {
             }
         },
         None => {
-            use std::io::IsTerminal;
-            if std::io::stdin().is_terminal() {
-                let db_path = default_db_path();
-                if let Err(e) = cortex_tui::run_tui(&db_path) {
-                    eprintln!("Error running interactive agent: {}", e);
-                    std::process::exit(1);
-                }
-            } else {
-                println!("Cortex Agent Runtime v{}", VERSION);
-                println!("Run 'cortex --help' or 'agent --help' for usage instructions.");
+            let db_path = cli.db.unwrap_or_else(default_db_path);
+            if let Err(e) = cortex_tui::run_tui(&db_path) {
+                eprintln!("Error running interactive control plane: {}", e);
+                std::process::exit(1);
             }
         }
     }
@@ -2022,6 +2123,22 @@ mod tests {
         let args_dash = vec!["cortex", "dashboard"];
         let parsed_dash = Cli::try_parse_from(args_dash).unwrap();
         assert!(matches!(parsed_dash.command, Some(Commands::Tui { .. })));
+    }
+
+    #[test]
+    fn test_cli_parsing_default_empty_args_and_global_db() {
+        let args_empty = vec!["cortex"];
+        let parsed_empty = Cli::try_parse_from(args_empty).unwrap();
+        assert!(parsed_empty.command.is_none());
+        assert!(parsed_empty.db.is_none());
+
+        let args_db = vec!["cortex", "--db", "/custom/path/cortex.db"];
+        let parsed_db = Cli::try_parse_from(args_db).unwrap();
+        assert!(parsed_db.command.is_none());
+        assert_eq!(
+            parsed_db.db,
+            Some(std::path::PathBuf::from("/custom/path/cortex.db"))
+        );
     }
 
     #[test]

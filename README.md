@@ -109,13 +109,16 @@ cortex runs show <run-id> --verbose
 cortex runs replay <run-id>
 ```
 
-### terminal control plane (tui)
+### interactive terminal control plane (tui)
 
 ratatui terminal control plane for live and historical execution inspection:
 
 ```bash
-cortex tui
-cortex tui --db /path/to/cortex.db
+# launch interactive control plane directly
+cortex
+
+# launch with custom database path
+cortex --db /path/to/cortex.db
 ```
 
 views:
@@ -165,9 +168,9 @@ implemented:
 - workspace path containment and boundary enforcement
 - tool registry: filesystem, shell execution with token scrubbing, git tools
 - persistent sqlite event tracing (`run_store`) and deterministic replay
-- ratatui terminal control plane (`cortex tui`)
+- ratatui terminal control plane (`cortex`)
 - benchmark evaluation harness (`cortex bench`)
-- cli harness (`cortex run`, `cortex runs`, `cortex bench`, `cortex tui`)
+- cli harness (`cortex`, `cortex run`, `cortex runs`, `cortex bench`)
 
 planned:
 - docker container sandbox execution

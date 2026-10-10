@@ -93,5 +93,5 @@ cortex run "Refactor configuration parsing to support environment overrides" \
   --model claude-3-5-sonnet-20241022
 ```
 
-All tool calls, command outputs, token usage, and costs are persisted to `~/.cortex/cortex.db` and can be inspected live in `cortex tui` or with `cortex runs show <run-id>`.
+All tool calls, command outputs, token usage, and costs are persisted to `~/.cortex/cortex.db` and can be inspected live in `cortex` or with `cortex runs show <run-id>`.
 

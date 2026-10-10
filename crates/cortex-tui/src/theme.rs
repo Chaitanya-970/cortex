@@ -8,73 +8,75 @@ use ratatui::symbols::border::Set as BorderSet;
 /// Visual theme mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThemeMode {
-    /// Codex CLI & Claude Code theme: Terracotta (#d77757), Hot Pink (#fd5db1), Lavender (#b1b9f9).
+    /// Blue theme: Electric Blue (#3b82f6), Sky Cyan (#38bdf8), Ice Blue (#93c5fd).
     #[default]
+    Blue,
+    /// Codex CLI & Claude Code theme: Terracotta (#d77757), Hot Pink (#fd5db1), Lavender (#b1b9f9).
     Codex,
     /// Gemini CLI theme: Electric Blue (#4285f4), Sparkle Violet (#a855f7), Sky Cyan (#38bdf8), ✦ sparkle star.
     Gemini,
 }
 
 // =========================================================================
-// Codex CLI & Claude Code Theme Color Palette (DESIGN.md)
+// Blue Theme Color Palette
 // =========================================================================
 
-/// Terminal dark background (`#1a1a1a`).
-pub const COLOR_BG: Color = Color::Rgb(26, 26, 26);
+/// Terminal dark background (`#0f172a` deep midnight slate navy).
+pub const COLOR_BG: Color = Color::Rgb(15, 23, 42);
 
 /// Default foreground / pure white AI responses (`#ffffff`).
 pub const COLOR_FG: Color = Color::Rgb(255, 255, 255);
 
-/// Primary terracotta brand accent (`#d77757`).
-pub const COLOR_PRIMARY: Color = Color::Rgb(215, 119, 87);
+/// Primary Electric Blue brand accent (`#3b82f6`).
+pub const COLOR_PRIMARY: Color = Color::Rgb(59, 130, 246);
 
-/// Hot pink bash & tool execution border (`#fd5db1`).
-pub const COLOR_SECONDARY: Color = Color::Rgb(253, 93, 177);
+/// Sky Cyan bash & tool execution border (`#38bdf8`).
+pub const COLOR_SECONDARY: Color = Color::Rgb(56, 189, 248);
 
-/// Lavender-blue permission dialogs and accents (`#b1b9f9`).
-pub const COLOR_ACCENT: Color = Color::Rgb(177, 185, 249);
+/// Royal / Ice Blue dialogs and accents (`#93c5fd`).
+pub const COLOR_ACCENT: Color = Color::Rgb(147, 197, 253);
 
-/// Lighter terracotta for shimmer animation (`#eb9f7f`).
-pub const COLOR_CLAUDE_SHIMMER: Color = Color::Rgb(235, 159, 127);
+/// Lighter electric blue for shimmer animation (`#bfdbfe`).
+pub const COLOR_CLAUDE_SHIMMER: Color = Color::Rgb(191, 219, 254);
 
 /// Compatibility alias for Gemini shimmer.
 pub const COLOR_GEMINI_SHIMMER: Color = COLOR_CLAUDE_SHIMMER;
 
-/// Background fill for tool & bash output (`rgb(65, 60, 65)`).
-pub const COLOR_TOOL_BG: Color = Color::Rgb(65, 60, 65);
+/// Background fill for tool & bash output (deep slate navy `#1e293b`).
+pub const COLOR_TOOL_BG: Color = Color::Rgb(30, 41, 59);
 
-/// Lavender-blue permission dialogs and accents (`#b1b9f9`).
-pub const COLOR_LAVENDER: Color = Color::Rgb(177, 185, 249);
+/// Lavender-blue accents (`#a5b4fc`).
+pub const COLOR_LAVENDER: Color = Color::Rgb(165, 180, 252);
 
-/// Purple auto-accept / YOLO mode (`#af87ff`).
-pub const COLOR_AUTO_ACCEPT: Color = Color::Rgb(175, 135, 255);
+/// Blue-violet auto-accept / YOLO mode (`#818cf8`).
+pub const COLOR_AUTO_ACCEPT: Color = Color::Rgb(129, 140, 248);
 
-/// Green completion / success indicator (`#4eba65`).
-pub const COLOR_SUCCESS: Color = Color::Rgb(78, 186, 101);
+/// Green completion / success indicator (`#34d399`).
+pub const COLOR_SUCCESS: Color = Color::Rgb(52, 211, 153);
 
-/// Amber / gold warning and caution (`#ffc107`).
-pub const COLOR_WARNING: Color = Color::Rgb(255, 193, 7);
+/// Amber / gold warning and caution (`#fbbf24`).
+pub const COLOR_WARNING: Color = Color::Rgb(251, 191, 36);
 
-/// Soft red-pink errors (`#ff6b80`).
-pub const COLOR_ERROR: Color = Color::Rgb(255, 107, 128);
+/// Soft red errors (`#f87171`).
+pub const COLOR_ERROR: Color = Color::Rgb(248, 113, 113);
 
-/// Muted gray for inactive elements and input borders (`#888888`).
-pub const COLOR_MUTED: Color = Color::Rgb(136, 136, 136);
+/// Muted slate gray for inactive elements and input borders (`#64748b`).
+pub const COLOR_MUTED: Color = Color::Rgb(100, 116, 139);
 
-/// Light gray for shimmering input borders (`#a6a6a6`).
-pub const COLOR_MUTED_SHIMMER: Color = Color::Rgb(166, 166, 166);
+/// Light slate for shimmering input borders (`#94a3b8`).
+pub const COLOR_MUTED_SHIMMER: Color = Color::Rgb(148, 163, 184);
 
-/// Dark gray for subtle dividers (`#505050`).
-pub const COLOR_SUBTLE: Color = Color::Rgb(80, 80, 80);
+/// Dark slate navy for subtle dividers (`#334155`).
+pub const COLOR_SUBTLE: Color = Color::Rgb(51, 65, 85);
 
-/// Surface background for user message cards (`#373737`).
-pub const COLOR_SURFACE: Color = Color::Rgb(55, 55, 55);
+/// Surface background for user message cards (`#1e293b`).
+pub const COLOR_SURFACE: Color = Color::Rgb(30, 41, 59);
 
-/// Diff added line background tint (`#225c2b`).
-pub const COLOR_DIFF_ADDED_BG: Color = Color::Rgb(34, 92, 43);
+/// Diff added line background tint (`#064e3b`).
+pub const COLOR_DIFF_ADDED_BG: Color = Color::Rgb(6, 78, 59);
 
-/// Diff removed line background tint (`#7a2936`).
-pub const COLOR_DIFF_REMOVED_BG: Color = Color::Rgb(122, 41, 54);
+/// Diff removed line background tint (`#7f1d1d`).
+pub const COLOR_DIFF_REMOVED_BG: Color = Color::Rgb(127, 29, 29);
 
 /// Reverse-mirror thinking spinner symbols per DESIGN.md:
 /// `· → ✢ → ✳ → ✶ → ✻ → ✽ → ✻ → ✶ → ✳ → ✢ → · ...`

@@ -118,7 +118,7 @@ cortex run "Fix calculator bug and commit" \
 
 ## Setting Gemma 4 as the Default Model
 
-Configure Gemma 4 as your default engine so you can simply type `cortex run "<prompt>"` or use `cortex tui` without passing model flags:
+Configure Gemma 4 as your default engine so you can simply type `cortex run "<prompt>"` or use `cortex` without passing model flags:
 
 Edit `~/.cortex/settings.json`:
 
