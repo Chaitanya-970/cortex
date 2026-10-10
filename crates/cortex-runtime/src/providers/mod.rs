@@ -23,6 +23,7 @@ pub fn estimate_cost(model_name: &str, prompt_tokens: usize, completion_tokens: 
         m if m.contains("deepseek") => (0.14, 0.28),
         m if m.contains("gemini-1.5-pro") => (1.25, 5.00),
         m if m.contains("gemini-1.5-flash") => (0.075, 0.30),
+        m if m.contains("gemma") || m.contains("codegemma") => (0.0, 0.0),
         m if m.contains("ollama") || m.contains("local") => (0.0, 0.0),
         _ => (1.00, 3.00),
     };
@@ -62,13 +63,22 @@ pub fn create_model_provider(
         let key = api_key
             .or_else(|| std::env::var("OPENAI_API_KEY").ok())
             .or_else(|| std::env::var("openai_api_key").ok())
+            .or_else(|| std::env::var("GEMINI_API_KEY").ok())
+            .or_else(|| std::env::var("gemini_api_key").ok())
             .or_else(|| settings.resolve_api_key(model));
         let url = base_url
             .or_else(|| std::env::var("OPENAI_API_BASE").ok())
             .or_else(|| std::env::var("openai_api_base").ok())
             .or_else(|| std::env::var("CORTEX_API_BASE").ok())
             .or_else(|| std::env::var("cortex_api_base").ok())
-            .or_else(|| settings.resolve_base_url(model));
+            .or_else(|| settings.resolve_base_url(model))
+            .or_else(|| {
+                if (lower.contains("gemma") || lower.contains("codegemma")) && key.is_none() {
+                    Some("http://localhost:11434/v1".to_string())
+                } else {
+                    None
+                }
+            });
         let mut provider = OpenAiCompatibleProvider::new(model, key, url);
         if let Some(p) = &settings.provider {
             if settings.model.eq_ignore_ascii_case(model) {

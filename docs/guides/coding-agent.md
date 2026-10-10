@@ -64,20 +64,33 @@ The coding agent workflow is verified through an automated integration test (`te
 
 Use the `cortex run` CLI to dispatch real coding instructions to model providers:
 
+### Local Google Gemma (Recommended: 100% Private, Zero Cost)
+```bash
+# Gemma 2 9B for autonomous bug diagnosis and repair
+cortex run "Run tests, find broken calculator functions, fix them, and commit" \
+  --model ollama/gemma2:9b
+
+# Google CodeGemma for precision refactoring
+cortex run "Refactor configuration parsing to support environment overrides" \
+  --model ollama/codegemma
+
+# Hosted Gemma 2 via Google AI Studio
+export GEMINI_API_KEY="AIzaSy..."
+cortex run "Audit error types and replace unwrap() with proper Result handling" \
+  --model gemma-2-27b-it \
+  --base-url https://generativelanguage.googleapis.com/v1beta/openai/
+```
+
+### Cloud Providers
 ```bash
 # OpenAI GPT-4o-mini
 export OPENAI_API_KEY="sk-..."
-cortex run "Run tests, find broken calculator functions, fix them, and commit"
+cortex run "Implement health check endpoint and verify with cargo test"
 
 # Anthropic Claude 3.5 Sonnet
 export ANTHROPIC_API_KEY="sk-ant-..."
 cortex run "Refactor configuration parsing to support environment overrides" \
   --model claude-3-5-sonnet-20241022
-
-# Local Ollama (offline / private)
-cortex run "Inspect the git diff and write release notes" \
-  --model ollama/llama3.1 \
-  --base-url http://localhost:11434/v1
 ```
 
 All tool calls, command outputs, token usage, and costs are persisted to `~/.cortex/cortex.db` and can be inspected live in `cortex tui` or with `cortex runs show <run-id>`.

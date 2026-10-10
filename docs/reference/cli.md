@@ -48,28 +48,44 @@ cortex run "<prompt>" [OPTIONS]
 
 ### Examples
 
-#### 1. OpenAI / OpenAI-Compatible
+#### 1. Local Google Gemma (Offline, 100% Free, Zero API Key)
+```bash
+# Gemma 2 9B (recommended default)
+cortex run "Inspect the git status and fix failing tests" --model ollama/gemma2:9b
+
+# Specialized CodeGemma for refactoring
+cortex run "Refactor configuration parsing to support environment variables" \
+  --model ollama/codegemma
+
+# Explicit workspace sandboxing with Gemma
+cortex run "Implement health check route" \
+  --model ollama/gemma2:9b \
+  --workspace /path/to/project
+```
+
+#### 2. Google AI Studio (Hosted Gemma 2)
+```bash
+export GEMINI_API_KEY="AIzaSy..."
+cortex run "Summarize commit history and update CHANGELOG.md" \
+  --model gemma-2-27b-it \
+  --base-url https://generativelanguage.googleapis.com/v1beta/openai/
+```
+
+#### 3. OpenAI / OpenAI-Compatible
 ```bash
 export OPENAI_API_KEY="sk-..."
 cortex run "Refactor error handling in src/model.rs" --model gpt-4o-mini
 ```
 
-#### 2. Anthropic Claude
+#### 4. Anthropic Claude
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 cortex run "Add comprehensive unit tests for tool registry" --model claude-3-5-sonnet-20241022
 ```
 
-#### 3. Local Ollama (Zero API Key Required)
+#### 5. JSON Output with Cost Tracking
 ```bash
-cortex run "Inspect the git status and summarize recent commits" \
-  --model ollama/llama3.1 \
-  --base-url http://localhost:11434/v1
-```
-
-#### 4. JSON Output with Cost Tracking
-```bash
-cortex run "Fix calculator bug" --json
+cortex run "Fix calculator bug" --model ollama/gemma2:9b --json
 ```
 
 Output:
