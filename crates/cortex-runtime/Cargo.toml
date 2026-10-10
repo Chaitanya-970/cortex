@@ -20,7 +20,7 @@ chrono = { workspace = true }
 ureq = { workspace = true }
 toml = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-tokio = { version = "1", features = ["rt", "time", "macros"] }
+tokio = { version = "1", features = ["rt", "time", "macros", "sync"] }
 serde_yaml = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
