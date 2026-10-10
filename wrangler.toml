@@ -1,0 +1,8 @@
+name = "cortex-docs"
+compatibility_date = "2024-09-23"
+
+# Point Cloudflare Workers to the static assets built by Astro/Starlight
+[assets]
+directory = "./website/dist"
+binding = "ASSETS"
+not_found_handling = "404-page"
