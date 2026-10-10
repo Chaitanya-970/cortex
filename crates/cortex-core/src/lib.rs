@@ -18,7 +18,7 @@ pub mod workflow;
 
 pub use error::{CortexError, Result};
 pub use event::{EventRecord, ExecutionEvent};
-pub use id::{AgentId, RunId, SessionId, WorkflowId};
+pub use id::{AgentId, JobId, RunId, SessionId, WorkflowId};
 pub use redact::Redactor;
 pub use settings::UserSettings;
 pub use workflow::{WorkflowAgentRef, WorkflowManifest, WorkflowStage};
