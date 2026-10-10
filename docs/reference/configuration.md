@@ -10,10 +10,10 @@ Global defaults apply to all `cortex run` invocations when CLI flags are not pro
 
 ```json
 {
-  "model": "ollama/gemma2:9b",
+  "model": "ollama/gemma4:12b",
   "base_url": "http://localhost:11434/v1",
   "temperature": 0.2,
-  "max_tokens": 4096,
+  "max_tokens": 8192,
   "max_iterations": 15,
   "db_path": "~/.cortex/cortex.db"
 }
@@ -23,7 +23,7 @@ Global defaults apply to all `cortex run` invocations when CLI flags are not pro
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `model` | string | `gpt-4o-mini` | Default model identifier (e.g. `ollama/gemma2:9b`, `ollama/codegemma`, `gpt-4o-mini`, `claude-3-5-sonnet-20241022`). |
+| `model` | string | `gpt-4o-mini` | Default model identifier (e.g. `ollama/gemma4:12b`, `ollama/codegemma`, `gpt-4o-mini`, `claude-3-5-sonnet-20241022`). |
 | `base_url` | string | `null` | Base URL for OpenAI-compatible REST endpoints (auto-detected for `ollama/*` as `http://localhost:11434/v1`). |
 | `temperature` | float | `0.2` | Sampling temperature (`0.0` - `1.0`). Keep low (`0.1`-`0.3`) for deterministic coding agents. |
 | `max_tokens` | integer | `4096` | Maximum generation tokens per model response step. |
@@ -34,7 +34,7 @@ Manage settings directly via the CLI:
 
 ```bash
 cortex settings get model
-cortex settings set model ollama/gemma2:9b
+cortex settings set model ollama/gemma4:12b
 cortex settings set base_url http://localhost:11434/v1
 ```
 
@@ -44,23 +44,23 @@ cortex settings set base_url http://localhost:11434/v1
 
 Autonomous workers can be defined declaratively in YAML, JSON, or TOML files.
 
-### Example: Google Gemma 2 Coding Agent
+### Example: Google Gemma 4 Coding Agent
 
 ```yaml
 version: "1.0"
 id: gemma-coder
-name: "Gemma Autonomous Coder"
+name: "Gemma 4 Autonomous Coder"
 role: "Software Engineer"
-description: "Specialized coding worker powered by Google Gemma 2 9B"
+description: "Specialized coding worker powered by Google Gemma 4 12B"
 
 workspace: "./my-project"
 
 model:
   provider: "ollama"
-  model: "gemma2:9b"
+  model: "gemma4:12b"
   base_url: "http://localhost:11434/v1"
   temperature: 0.2
-  max_tokens: 4096
+  max_tokens: 8192
 
 tools:
   - filesystem
@@ -114,18 +114,18 @@ permissions:
     allowed: true
 ```
 
-### Example: Cloud-Hosted Gemma 2 (Google AI Studio)
+### Example: Cloud-Hosted Gemma 4 (Google AI Studio)
 
 ```yaml
 version: "1.0"
 id: gemma-cloud-reviewer
-name: "Gemma Cloud Reviewer"
+name: "Gemma 4 Cloud Reviewer"
 role: "Architecture Reviewer"
 workspace: "."
 
 model:
   provider: "google"
-  model: "gemma-2-27b-it"
+  model: "gemma-4-26b-it"
   base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
   api_key_env: "GEMINI_API_KEY"
   temperature: 0.3

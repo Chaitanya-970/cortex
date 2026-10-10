@@ -48,26 +48,26 @@ cortex run "<prompt>" [OPTIONS]
 
 ### Examples
 
-#### 1. Local Google Gemma (Offline, 100% Free, Zero API Key)
+#### 1. Local Google Gemma 4 (Offline, 100% Free, Zero API Key)
 ```bash
-# Gemma 2 9B (recommended default)
-cortex run "Inspect the git status and fix failing tests" --model ollama/gemma2:9b
+# Gemma 4 12B (recommended default)
+cortex run "Inspect the git status and fix failing tests" --model ollama/gemma4:12b
 
-# Specialized CodeGemma for refactoring
+# Gemma 4 26B (deep reasoning variant)
 cortex run "Refactor configuration parsing to support environment variables" \
-  --model ollama/codegemma
+  --model ollama/gemma4:26b
 
-# Explicit workspace sandboxing with Gemma
+# Explicit workspace sandboxing with Gemma 4
 cortex run "Implement health check route" \
-  --model ollama/gemma2:9b \
+  --model ollama/gemma4:12b \
   --workspace /path/to/project
 ```
 
-#### 2. Google AI Studio (Hosted Gemma 2)
+#### 2. Google AI Studio (Hosted Gemma 4)
 ```bash
 export GEMINI_API_KEY="AIzaSy..."
 cortex run "Summarize commit history and update CHANGELOG.md" \
-  --model gemma-2-27b-it \
+  --model gemma-4-26b-it \
   --base-url https://generativelanguage.googleapis.com/v1beta/openai/
 ```
 

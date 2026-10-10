@@ -8,7 +8,7 @@ Get up and running with Cortex in under 2 minutes. Cortex is designed to provide
 
 - **Rust**: Version >= 1.75 (`rustup update stable`)
 - **Git** & **SQLite**
-- *(Optional for 100% free local execution)* **Ollama**: [ollama.com](https://ollama.com) with Google Gemma 2 (`ollama pull gemma2:9b`)
+- *(Optional for 100% free local execution)* **Ollama**: [ollama.com](https://ollama.com) with Google Gemma 4 (`ollama pull gemma4:12b`)
 
 ---
 
@@ -32,22 +32,26 @@ cortex check
 
 ## 3. Run Your First Agent Task
 
-### Option A: Local Google Gemma (Recommended: 100% Private, Zero Cost)
+### Option A: Local Google Gemma 4 (Recommended: 100% Private, Zero Cost)
 
-Cortex provides first-class support for Google Gemma open models. Run completely offline without an API key:
+Cortex provides first-class support for Google Gemma 4 open models. Run completely offline without an API key:
 
 ```bash
-# Pull Gemma 2
-ollama pull gemma2:9b
+# Pull Gemma 4 12B
+ollama pull gemma4:12b
 
 # Dispatch an autonomous coding task
 cortex run "Inspect the git status, review recent commits, and verify cargo check passes" \
-  --model ollama/gemma2:9b
+  --model ollama/gemma4:12b
 ```
 
-You can also run Google's specialized coding model:
+You can also run Gemma 4 reasoning variants or specialized coding models:
 
 ```bash
+# Gemma 4 26B for complex refactoring
+cortex run "Refactor error handling to use thiserror" --model ollama/gemma4:26b
+
+# CodeGemma for targeted syntax edits
 ollama pull codegemma
 cortex run "Refactor error handling to use thiserror" --model ollama/codegemma
 ```
@@ -56,12 +60,12 @@ See the [Google Gemma Guide](../guides/gemma.md) for full deployment details (Ol
 
 ### Option B: Google AI Studio / Gemini API
 
-Run Gemma or Gemini models via Google AI Studio's OpenAI-compatible endpoint:
+Run Gemma 4 or Gemini models via Google AI Studio's OpenAI-compatible endpoint:
 
 ```bash
 export GEMINI_API_KEY="AIzaSy..."
 cortex run "Inspect tests and fix any failing assertions" \
-  --model gemma-2-27b-it \
+  --model gemma-4-26b-it \
   --base-url https://generativelanguage.googleapis.com/v1beta/openai/
 ```
 
@@ -86,7 +90,7 @@ By default, Cortex confines the agent's filesystem and process execution to the 
 ```bash
 cortex run "Implement health check endpoint" \
   --workspace /path/to/my-project \
-  --model ollama/gemma2:9b
+  --model ollama/gemma4:12b
 ```
 
 ---

@@ -60,7 +60,7 @@ export default defineConfig({
           label: 'User Guides',
           items: [
             { label: 'Autonomous Coding Agent', slug: 'guides/coding-agent' },
-            { label: 'Google Gemma Guide', slug: 'guides/gemma' },
+            { label: 'Google Gemma 4 Guide', slug: 'guides/gemma' },
             { label: 'Terminal Control Plane (TUI)', slug: 'guides/tui' },
             { label: 'Multi-Agent Coordination', slug: 'guides/multi-agent' },
             { label: 'Model Context Protocol (MCP)', slug: 'guides/mcp' },

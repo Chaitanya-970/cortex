@@ -1,6 +1,6 @@
 # cortex
 
-open source rust runtime and harness for autonomous ai workers — built for Google Gemma, open models, and multi-agent coordination
+open source rust runtime and harness for autonomous ai workers — built for Google Gemma 4, open models, and multi-agent coordination
 
 ## runtime authority & security invariants
 
@@ -74,14 +74,14 @@ cortex-tui = { git = "https://github.com/x1-xh/cortex.git" }
 autonomous iterative loop (model -> tool -> result -> model) with workspace confinement, token metrics, and usd cost calculation:
 
 ```bash
-# google gemma (local offline via ollama, zero api key required)
-cortex run "inspect src/lib.rs and fix compiler warnings" --model ollama/gemma2:9b
+# google gemma 4 (local offline via ollama, zero api key required)
+cortex run "inspect src/lib.rs and fix compiler warnings" --model ollama/gemma4:12b
 
-# google gemma (hosted via google ai studio / gemini api)
+# google gemma 4 (hosted via google ai studio / gemini api)
 export GEMINI_API_KEY="AIza..."
-cortex run "audit repository security" --model gemma-2-27b-it --base-url https://generativelanguage.googleapis.com/v1beta/openai/
+cortex run "audit repository security" --model gemma-4-26b-it --base-url https://generativelanguage.googleapis.com/v1beta/openai/
 
-# codegemma for autonomous code editing
+# codegemma / gemma 2 for specialized editing
 cortex run "refactor error handling to use thiserror" --model ollama/codegemma
 
 # openai / anthropic

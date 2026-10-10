@@ -64,20 +64,20 @@ The coding agent workflow is verified through an automated integration test (`te
 
 Use the `cortex run` CLI to dispatch real coding instructions to model providers:
 
-### Local Google Gemma (Recommended: 100% Private, Zero Cost)
+### Local Google Gemma 4 (Recommended: 100% Private, Zero Cost)
 ```bash
-# Gemma 2 9B for autonomous bug diagnosis and repair
+# Gemma 4 12B for autonomous bug diagnosis and repair
 cortex run "Run tests, find broken calculator functions, fix them, and commit" \
-  --model ollama/gemma2:9b
+  --model ollama/gemma4:12b
 
-# Google CodeGemma for precision refactoring
+# Gemma 4 26B for complex refactoring and deep reasoning
 cortex run "Refactor configuration parsing to support environment overrides" \
-  --model ollama/codegemma
+  --model ollama/gemma4:26b
 
-# Hosted Gemma 2 via Google AI Studio
+# Hosted Gemma 4 via Google AI Studio
 export GEMINI_API_KEY="AIzaSy..."
 cortex run "Audit error types and replace unwrap() with proper Result handling" \
-  --model gemma-2-27b-it \
+  --model gemma-4-26b-it \
   --base-url https://generativelanguage.googleapis.com/v1beta/openai/
 ```
 

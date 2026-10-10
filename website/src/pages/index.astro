@@ -13,15 +13,12 @@ import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
       
       <p class="term-subtitle">
         <strong>Model output is untrusted input. The runtime is the sole execution authority.</strong><br />
-        Built for autonomous workers powered by <strong>Google Gemma</strong> &amp; open models. Sandboxed execution, append-only SQLite tracing, and multi-agent coordination.
+        Deterministic workspace sandboxing, append-only SQLite tracing, and multi-agent coordination.
       </p>
 
       <div class="term-actions">
         <a href="/getting-started/quickstart/" class="term-btn-primary">
           <span>&gt; quickstart</span>
-        </a>
-        <a href="/guides/gemma/" class="term-btn-primary">
-          <span>★ gemma guide</span>
         </a>
         <a href="/reference/cli/" class="term-btn-secondary">
           <span>cli reference</span>
@@ -51,24 +48,21 @@ import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
           </div>
         </div>
 
-        <!-- 2. Run with Google Gemma -->
+        <!-- 2. Set credentials -->
         <div class="term-cmd-row">
-          <div class="term-cmd-label">2. Run Local Google Gemma (100% Private, Zero Cost)</div>
+          <div class="term-cmd-label">2. Set API Key (Or use local Ollama)</div>
           <div class="term-code">
-            <span class="term-prompt">$</span>ollama pull gemma2:9b<br />
-            <span class="term-prompt">$</span>cortex run "inspect src/lib.rs and fix compiler warnings" --model ollama/gemma2:9b
+            <span class="term-prompt">$</span>export OPENAI_API_KEY="sk-..." <span class="term-comment"># or ANTHROPIC_API_KEY</span>
           </div>
         </div>
 
-        <!-- 3. Specialized CodeGemma & Hosted Gemma 2 -->
+        <!-- 3. Run Agent Task -->
         <div class="term-cmd-row">
-          <div class="term-cmd-label">3. CodeGemma &amp; Google AI Studio</div>
+          <div class="term-cmd-label">3. Run Autonomous Agent Task</div>
           <div class="term-code">
-            <span class="term-comment"># CodeGemma for precision refactoring:</span><br />
-            <span class="term-prompt">$</span>cortex run "refactor error handling" --model ollama/codegemma<br />
-            <span class="term-comment"># Or hosted Gemma 2 via Google AI Studio:</span><br />
-            <span class="term-prompt">$</span>export GEMINI_API_KEY="AIzaSy..."<br />
-            <span class="term-prompt">$</span>cortex run "audit tests" --model gemma-2-27b-it
+            <span class="term-prompt">$</span>cortex run "inspect src/lib.rs and fix compiler warnings"<br />
+            <span class="term-comment"># With explicit workspace sandboxing:</span><br />
+            <span class="term-prompt">$</span>cortex run "refactor error handling" --workspace /path/to/project
           </div>
         </div>
 
@@ -104,9 +98,6 @@ import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
           <strong>Workspace Sandbox:</strong> Path canonicalization denies directory traversal (<code>../</code>) and symlink escape.
         </li>
         <li>
-          <strong>Google Gemma First-Class:</strong> 100% local, air-gapped, zero-cost workers powered by Gemma 2 (9B, 27B, 2B) &amp; CodeGemma.
-        </li>
-        <li>
           <strong>SQLite Tracing:</strong> Append-only event store with automatic secret redaction (<code>sk-...</code>) &amp; replay.
         </li>
         <li>
@@ -119,7 +110,6 @@ import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
     <div class="term-nav-links">
       <a href="/getting-started/quickstart/" class="term-nav-tag">/getting-started/quickstart</a>
       <a href="/getting-started/installation/" class="term-nav-tag">/getting-started/installation</a>
-      <a href="/guides/gemma/" class="term-nav-tag">/guides/gemma</a>
       <a href="/architecture/overview/" class="term-nav-tag">/architecture/overview</a>
       <a href="/guides/coding-agent/" class="term-nav-tag">/guides/coding-agent</a>
       <a href="/guides/tui/" class="term-nav-tag">/guides/tui</a>

@@ -25,7 +25,7 @@ The complete Cortex runtime consists of 10 decoupled layers:
 
 1. **Control Plane & CLI/TUI**: User interface, configuration loader, and task dispatcher. The CLI and future TUI act strictly as presentation consumers of runtime state; execution logic lives entirely in the runtime engine.
 2. **Agent Runtime Engine**: The core execution coordinator managing the iterative loop (prompt construction, model invocation, action decoding, tool dispatch, error recovery).
-3. **Model Layer**: Provider-agnostic inference abstraction supporting local models—specifically optimized for **Google Gemma** (Gemma 2 9B/27B/2B and CodeGemma via Ollama, llama.cpp, and vLLM) with zero inference cost, privacy, and sub-millisecond local execution, as well as hosted endpoints (Google AI Studio, OpenAI, Anthropic).
+3. **Model Layer**: Provider-agnostic inference abstraction supporting local models—specifically optimized for **Google Gemma 4** (Gemma 4 12B/26B/31B and Edge E4B/E2B via Ollama, llama.cpp, and vLLM) with zero inference cost, privacy, and sub-millisecond local execution, as well as hosted endpoints (Google AI Studio, OpenAI, Anthropic).
 4. **Tool Layer**: Registry and typed invocation harness for agent tools (filesystem, shell, git, search).
 5. **Agent Manager**: Registry managing persistent worker state, lifecycle transitions (`created`, `running`, `paused`, `stopped`), and state recovery.
 6. **Permission Layer**: Capability-based security policy engine evaluating tool execution requests against configured permissions.
