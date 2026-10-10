@@ -193,6 +193,38 @@ impl AgentDescriptor {
         self
     }
 
+    /// Check whether this descriptor matches a specific capability or tag query.
+    pub fn matches_capability(&self, query: &str) -> bool {
+        self.capabilities.iter().any(|c| c.matches(query))
+            || self
+                .tags
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case(query.trim()))
+    }
+
+    /// Count how many distinct capability or tag queries this descriptor satisfies.
+    ///
+    /// Duplicate queries are deduplicated (case-insensitively, trimmed) so each unique criterion
+    /// contributes at most 1 to the total score.
+    pub fn match_score(&self, queries: &[impl AsRef<str>]) -> usize {
+        let mut seen = Vec::with_capacity(queries.len());
+        let mut score = 0;
+        for q in queries {
+            let s = q.as_ref().trim();
+            if s.is_empty() {
+                continue;
+            }
+            if seen.iter().any(|prev: &&str| prev.eq_ignore_ascii_case(s)) {
+                continue;
+            }
+            seen.push(s);
+            if self.matches_capability(s) {
+                score += 1;
+            }
+        }
+        score
+    }
+
     /// Construct an [`AgentDescriptor`] snapshot from an [`Agent`] runtime instance.
     pub fn from_agent(agent: &Agent) -> Self {
         let mut capabilities = Vec::new();
@@ -378,11 +410,134 @@ impl AgentRegistry {
         let lock = self.descriptors.read().unwrap_or_else(|e| e.into_inner());
         let mut results: Vec<AgentDescriptor> = lock
             .values()
+            .filter(|d| d.matches_capability(capability))
+            .cloned()
+            .collect();
+        results.sort_by(|a, b| a.id.cmp(&b.id));
+        results
+    }
+
+    /// Find all agents matching every capability or tag in `queries` (conjunction / AND).
+    ///
+    /// If `queries` is empty, returns all registered agents.
+    pub fn find_by_all_capabilities(&self, queries: &[impl AsRef<str>]) -> Vec<AgentDescriptor> {
+        if queries.is_empty() {
+            return self.list_all();
+        }
+        let lock = self.descriptors.read().unwrap_or_else(|e| e.into_inner());
+        let mut results: Vec<AgentDescriptor> = lock
+            .values()
+            .filter(|d| queries.iter().all(|q| d.matches_capability(q.as_ref())))
+            .cloned()
+            .collect();
+        results.sort_by(|a, b| a.id.cmp(&b.id));
+        results
+    }
+
+    /// Find all agents matching at least one capability or tag in `queries` (disjunction / OR).
+    ///
+    /// If `queries` is empty, returns an empty vector.
+    pub fn find_by_any_capability(&self, queries: &[impl AsRef<str>]) -> Vec<AgentDescriptor> {
+        if queries.is_empty() {
+            return Vec::new();
+        }
+        let lock = self.descriptors.read().unwrap_or_else(|e| e.into_inner());
+        let mut results: Vec<AgentDescriptor> = lock
+            .values()
+            .filter(|d| queries.iter().any(|q| d.matches_capability(q.as_ref())))
+            .cloned()
+            .collect();
+        results.sort_by(|a, b| a.id.cmp(&b.id));
+        results
+    }
+
+    /// Rank registered agents by how many capabilities or tags in `queries` they satisfy.
+    ///
+    /// Returns pairs of `(descriptor, score)` where `score > 0`, ordered descending by score
+    /// with ties broken deterministically by `AgentId`.
+    pub fn rank_by_capabilities(
+        &self,
+        queries: &[impl AsRef<str>],
+    ) -> Vec<(AgentDescriptor, usize)> {
+        if queries.is_empty() {
+            return Vec::new();
+        }
+        let lock = self.descriptors.read().unwrap_or_else(|e| e.into_inner());
+        let mut scored: Vec<(AgentDescriptor, usize)> = lock
+            .values()
+            .filter_map(|d| {
+                let score = d.match_score(queries);
+                if score > 0 {
+                    Some((d.clone(), score))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        scored.sort_by(|(a_desc, a_score), (b_desc, b_score)| {
+            b_score.cmp(a_score).then_with(|| a_desc.id.cmp(&b_desc.id))
+        });
+        scored
+    }
+
+    /// Find the highest-scoring candidate agent matching `queries`.
+    ///
+    /// In case of score ties, picks the candidate with the smallest `AgentId`.
+    pub fn find_best_match(&self, queries: &[impl AsRef<str>]) -> Option<AgentDescriptor> {
+        self.rank_by_capabilities(queries)
+            .into_iter()
+            .next()
+            .map(|(desc, _)| desc)
+    }
+
+    /// Find all currently active agents ([`AgentState::Running`] or [`AgentState::Paused`])
+    /// exposing a matching capability or tag.
+    pub fn find_active_by_capability(&self, capability: &str) -> Vec<AgentDescriptor> {
+        let lock = self.descriptors.read().unwrap_or_else(|e| e.into_inner());
+        let mut results: Vec<AgentDescriptor> = lock
+            .values()
+            .filter(|d| d.status.is_active() && d.matches_capability(capability))
+            .cloned()
+            .collect();
+        results.sort_by(|a, b| a.id.cmp(&b.id));
+        results
+    }
+
+    /// Find all currently active agents matching all capabilities or tags in `queries`.
+    pub fn find_active_by_all_capabilities(
+        &self,
+        queries: &[impl AsRef<str>],
+    ) -> Vec<AgentDescriptor> {
+        if queries.is_empty() {
+            return self.list_active();
+        }
+        let lock = self.descriptors.read().unwrap_or_else(|e| e.into_inner());
+        let mut results: Vec<AgentDescriptor> = lock
+            .values()
             .filter(|d| {
-                d.capabilities.iter().any(|c| c.matches(capability))
-                    || d.tags
-                        .iter()
-                        .any(|t| t.eq_ignore_ascii_case(capability.trim()))
+                d.status.is_active() && queries.iter().all(|q| d.matches_capability(q.as_ref()))
+            })
+            .cloned()
+            .collect();
+        results.sort_by(|a, b| a.id.cmp(&b.id));
+        results
+    }
+
+    /// Find all currently active agents matching at least one capability or tag in `queries` (disjunction / OR).
+    ///
+    /// If `queries` is empty, returns an empty vector.
+    pub fn find_active_by_any_capability(
+        &self,
+        queries: &[impl AsRef<str>],
+    ) -> Vec<AgentDescriptor> {
+        if queries.is_empty() {
+            return Vec::new();
+        }
+        let lock = self.descriptors.read().unwrap_or_else(|e| e.into_inner());
+        let mut results: Vec<AgentDescriptor> = lock
+            .values()
+            .filter(|d| {
+                d.status.is_active() && queries.iter().any(|q| d.matches_capability(q.as_ref()))
             })
             .cloned()
             .collect();
@@ -636,5 +791,124 @@ mod tests {
 
         assert_eq!(registry.len(), 10);
         assert_eq!(registry.list_active().len(), 10);
+    }
+
+    #[test]
+    fn test_compound_capability_queries_and_ranking() {
+        let registry = AgentRegistry::new();
+
+        let id1 = AgentId::generate();
+        let desc1 = AgentDescriptor::new(
+            id1.clone(),
+            "Fullstack Coder",
+            "Software Engineer",
+            AgentState::Running,
+            PathBuf::from("/ws1"),
+        )
+        .with_capability(AgentCapability::tool("read_file"))
+        .with_capability(AgentCapability::tool("git_diff"))
+        .with_capability(AgentCapability::model_tier("coding"))
+        .with_capability(AgentCapability::domain("coder"))
+        .with_tag("backend");
+
+        let id2 = AgentId::generate();
+        let desc2 = AgentDescriptor::new(
+            id2.clone(),
+            "Junior Reviewer",
+            "Code Reviewer",
+            AgentState::Paused,
+            PathBuf::from("/ws2"),
+        )
+        .with_capability(AgentCapability::tool("read_file"))
+        .with_capability(AgentCapability::model_tier("fast"))
+        .with_capability(AgentCapability::domain("reviewer"))
+        .with_tag("qa");
+
+        let id3 = AgentId::generate();
+        let desc3 = AgentDescriptor::new(
+            id3.clone(),
+            "Offline Specialist",
+            "Security Auditor",
+            AgentState::Stopped,
+            PathBuf::from("/ws3"),
+        )
+        .with_capability(AgentCapability::tool("read_file"))
+        .with_capability(AgentCapability::tool("shell"))
+        .with_capability(AgentCapability::model_tier("reasoning"))
+        .with_tag("security");
+
+        registry.register(desc1.clone()).unwrap();
+        registry.register(desc2).unwrap();
+        registry.register(desc3).unwrap();
+
+        // 1. find_by_all_capabilities (AND)
+        // Only desc1 has both "git_diff" and "domain:coder"
+        let and_matches = registry.find_by_all_capabilities(&["git_diff", "domain:coder"]);
+        assert_eq!(and_matches.len(), 1);
+        assert_eq!(and_matches[0].id, id1);
+
+        // All 3 have "read_file"
+        let all_readers = registry.find_by_all_capabilities(&["read_file"]);
+        assert_eq!(all_readers.len(), 3);
+
+        // Empty queries returns all
+        assert_eq!(registry.find_by_all_capabilities(&[] as &[&str]).len(), 3);
+
+        // None match all of these
+        let no_matches = registry.find_by_all_capabilities(&["git_diff", "shell"]);
+        assert!(no_matches.is_empty());
+
+        // 2. find_by_any_capability (OR)
+        let or_matches = registry.find_by_any_capability(&["git_diff", "shell"]);
+        assert_eq!(or_matches.len(), 2);
+        let or_ids: Vec<AgentId> = or_matches.into_iter().map(|d| d.id).collect();
+        assert!(or_ids.contains(&id1));
+        assert!(or_ids.contains(&id3));
+
+        // 3. rank_by_capabilities
+        // Query: ["read_file", "git_diff", "coding", "backend"]
+        // desc1 matches all 4 (score 4)
+        // desc2 matches "read_file" (score 1)
+        // desc3 matches "read_file" (score 1)
+        let ranked = registry.rank_by_capabilities(&["read_file", "git_diff", "coding", "backend"]);
+        assert_eq!(ranked.len(), 3);
+        assert_eq!(ranked[0].0.id, id1);
+        assert_eq!(ranked[0].1, 4);
+
+        // find_best_match
+        let best = registry.find_best_match(&["git_diff", "coder"]);
+        assert_eq!(best.unwrap().id, id1);
+
+        // 4. find_active_by_capability & find_active_by_all_capabilities
+        // Active = desc1 (Running) and desc2 (Paused); desc3 is Stopped
+        let active_readers = registry.find_active_by_capability("read_file");
+        assert_eq!(active_readers.len(), 2);
+        let active_ids: Vec<AgentId> = active_readers.into_iter().map(|d| d.id).collect();
+        assert!(active_ids.contains(&id1));
+        assert!(active_ids.contains(&id2));
+        assert!(!active_ids.contains(&id3));
+
+        let active_shell = registry.find_active_by_capability("shell");
+        assert!(active_shell.is_empty()); // desc3 has shell, but is Stopped
+
+        let active_and = registry.find_active_by_all_capabilities(&["read_file", "coding"]);
+        assert_eq!(active_and.len(), 1);
+        assert_eq!(active_and[0].id, id1);
+
+        // find_active_by_any_capability
+        let active_or = registry.find_active_by_any_capability(&["git_diff", "shell"]);
+        assert_eq!(active_or.len(), 1);
+        assert_eq!(active_or[0].id, id1); // desc1 has git_diff (Running); desc3 has shell but is Stopped
+        assert!(registry
+            .find_active_by_any_capability(&[] as &[&str])
+            .is_empty());
+
+        // Deduplication in match_score and rank_by_capabilities
+        assert_eq!(
+            desc1.match_score(&["read_file", "read_file", "READ_FILE"]),
+            1
+        );
+        let ranked_dups = registry.rank_by_capabilities(&["read_file", "read_file"]);
+        assert_eq!(ranked_dups[0].1, 1);
     }
 }

@@ -353,3 +353,112 @@ fn test_concurrent_registry_operations() {
     assert_eq!(registry.find_by_role("Coder").len(), 5);
     assert_eq!(registry.find_by_role("Reviewer").len(), 5);
 }
+
+#[test]
+fn test_registry_compound_queries_and_ranking() {
+    let registry = AgentRegistry::new();
+
+    let id1 = AgentId::generate();
+    let desc1 = AgentDescriptor::new(
+        id1.clone(),
+        "Senior Rust Engineer",
+        "Lead Backend Engineer",
+        AgentState::Running,
+        PathBuf::from("/ws/backend"),
+    )
+    .with_capability(AgentCapability::tool("git_diff"))
+    .with_capability(AgentCapability::tool("git_commit"))
+    .with_capability(AgentCapability::tool("read_file"))
+    .with_capability(AgentCapability::model_tier("coding"))
+    .with_capability(AgentCapability::domain("coder"))
+    .with_tag("rust")
+    .with_tag("backend");
+
+    let id2 = AgentId::generate();
+    let desc2 = AgentDescriptor::new(
+        id2.clone(),
+        "Code Review Specialist",
+        "Staff Reviewer",
+        AgentState::Paused,
+        PathBuf::from("/ws/review"),
+    )
+    .with_capability(AgentCapability::tool("git_diff"))
+    .with_capability(AgentCapability::tool("read_file"))
+    .with_capability(AgentCapability::model_tier("reasoning"))
+    .with_capability(AgentCapability::domain("reviewer"))
+    .with_tag("qa");
+
+    let id3 = AgentId::generate();
+    let desc3 = AgentDescriptor::new(
+        id3.clone(),
+        "Offline Security Auditor",
+        "Security Lead",
+        AgentState::Stopped,
+        PathBuf::from("/ws/security"),
+    )
+    .with_capability(AgentCapability::tool("read_file"))
+    .with_capability(AgentCapability::tool("shell"))
+    .with_capability(AgentCapability::model_tier("reasoning"))
+    .with_capability(AgentCapability::domain("reviewer"))
+    .with_tag("security");
+
+    registry.register(desc1.clone()).unwrap();
+    registry.register(desc2).unwrap();
+    registry.register(desc3).unwrap();
+
+    // 1. find_by_all_capabilities (conjunction)
+    let rust_coder = registry.find_by_all_capabilities(&["git_*", "domain:coder", "rust"]);
+    assert_eq!(rust_coder.len(), 1);
+    assert_eq!(rust_coder[0].id, id1);
+
+    // Conjunction with model tier and tool
+    let reasoning_diff = registry.find_by_all_capabilities(&["tier:reasoning", "git_diff"]);
+    assert_eq!(reasoning_diff.len(), 1);
+    assert_eq!(reasoning_diff[0].id, id2);
+
+    // Conjunction that matches none
+    let impossible = registry.find_by_all_capabilities(&["shell", "git_commit"]);
+    assert!(impossible.is_empty());
+
+    // 2. find_by_any_capability (disjunction)
+    let commit_or_shell = registry.find_by_any_capability(&["git_commit", "shell"]);
+    assert_eq!(commit_or_shell.len(), 2);
+    let ids: Vec<AgentId> = commit_or_shell.into_iter().map(|d| d.id).collect();
+    assert!(ids.contains(&id1));
+    assert!(ids.contains(&id3));
+
+    // 3. rank_by_capabilities
+    let queries = ["read_file", "git_diff", "tier:reasoning", "qa"];
+    let ranked = registry.rank_by_capabilities(&queries);
+    assert_eq!(ranked.len(), 3);
+    // desc2 matches: read_file, git_diff, tier:reasoning, qa = 4 points
+    assert_eq!(ranked[0].0.id, id2);
+    assert_eq!(ranked[0].1, 4);
+
+    // find_best_match selects highest ranking candidate
+    let best = registry.find_best_match(&queries);
+    assert_eq!(best.unwrap().id, id2);
+
+    // 4. Availability filtering
+    let active_reasoning = registry.find_active_by_capability("tier:reasoning");
+    assert_eq!(active_reasoning.len(), 1);
+    assert_eq!(active_reasoning[0].id, id2); // desc3 has tier:reasoning but is Stopped
+
+    let active_all = registry.find_active_by_all_capabilities(&["read_file", "git_diff"]);
+    assert_eq!(active_all.len(), 2);
+    let active_ids: Vec<AgentId> = active_all.into_iter().map(|d| d.id).collect();
+    assert!(active_ids.contains(&id1));
+    assert!(active_ids.contains(&id2));
+
+    let active_any = registry.find_active_by_any_capability(&["git_commit", "shell"]);
+    assert_eq!(active_any.len(), 1);
+    assert_eq!(active_any[0].id, id1); // desc1 (Running) has git_commit; desc3 has shell but is Stopped
+
+    // 5. Query deduplication in scoring and ranking
+    assert_eq!(
+        desc1.match_score(&["git_diff", "git_diff", "GIT_DIFF", "   git_diff   "]),
+        1
+    );
+    let dup_ranked = registry.rank_by_capabilities(&["read_file", "read_file"]);
+    assert_eq!(dup_ranked[0].1, 1);
+}
